@@ -13,9 +13,8 @@ paths      CodeNode-trees  optional     JSON / NDJSON / stdout
 
 ```
 
-* **Languages** – Python (`.py`) & Markdown (`.md`) out-of-the-box.  
-  Extendable via plug-in parsers.  
-* **Outputs** – hierarchical or flat, single-file JSON or streaming NDJSON.  
+* **Languages** – Python (`.py`) & Markdown (`.md`) only in v1.  
+* **Outputs** – hierarchical or flat, envelope `JSON` or streaming `NDJSON`.  
 * **Logging** – powered by `structlog`; fully STDOUT-safe.  
 * **Fail-fast** – abort immediately on the first parser error if you need strict runs.
 * **Ignore rules** – `.repogptignore` (git-wildmatch) + sensible defaults (`.git`, `node_modules`, …).
@@ -39,7 +38,7 @@ Este proyecto utiliza [pre-commit](https://pre-commit.com) para asegurar calidad
 
 - **Linting y autoformato** (`black`, `ruff`)
 - **Chequeo de tipado** (`mypy`)
-- **Tests unitarios y cobertura ≥80%** (`pytest --cov`)
+- **Tests y checks reproducibles** (`pytest -q`, `ruff`, `mypy`)
 
 **¿Cómo contribuyo de forma segura?**
 
@@ -66,8 +65,8 @@ Este proyecto utiliza [pre-commit](https://pre-commit.com) para asegurar calidad
 # analyse a codebase and emit a single JSON file
 repogpt path-to-project/ -o report.json
 
-# NDJSON one-line-per-file, streamed to stdout (great for pipes)
-repogpt path-to-project/  --flatten node --format ndjson --stdout | jq 'select(.type=="Class")'
+# NDJSON streamed to stdout (great for pipes)
+repogpt path-to-project/ --flatten node --format ndjson --stdout | jq 'select(.record_type=="node" and .type=="class")'
 
 ```
 
@@ -77,11 +76,11 @@ repogpt path-to-project/  --flatten node --format ndjson --stdout | jq 'select(.
 
 | Flag                       | Default         | Description                                                                                                                     |
 | -------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `--flatten {node,file}`    | `node`          | *node*: every `CodeNode` appears (can explode to many lines).<br>*file*: only the root node (tree) per file.                    |
-| `--format {json,ndjson}`   | `json`          | Output container.<br>*json*: single list written to file.<br>*ndjson*: one JSON object per line (either node or file as above). |
+| `--flatten {node,file}`    | `node`          | *node*: every node appears as an output record.<br>*file*: only the root node per file is emitted.                               |
+| `--format {json,ndjson}`   | `json`          | *json*: envelope with `stats`, `failures` and `records`.<br>*ndjson*: stream of `node`, `failure` and `summary` records.        |
 | `--stdout`                 | -               | Stream to STDOUT instead of file.<br>Passing `-o /dev/stdout` has the same effect.                                              |
 | `-o, --output PATH`        | `analysis.json` | Destination file (ignored if `--stdout`).                                                                                       |
-| `--languages "py,md,ts"`   | all parsers     | Comma-separated, case-insensitive whitelist of extensions.                                                                      |
+| `--languages "py,md"`      | all parsers     | Comma-separated, case-insensitive whitelist of supported languages.                                                             |
 | `--include-tests`          | *off*           | Do **not** skip `tests/` or `test_*.py`.                                                                                        |
 | `--log-level {INFO,DEBUG}` | `INFO`          | Structured logs to STDERR.                                                                                                      |
 | `--fail-fast`              | *off*           | Abort on the first parser error (exit 1).                                                                                       |
@@ -92,6 +91,7 @@ repogpt path-to-project/  --flatten node --format ndjson --stdout | jq 'select(.
 | ---- | ----------------------------------------------- |
 | `0`  | All requested files parsed successfully.        |
 | `1`  | Fail-fast triggered or unrecoverable CLI error. |
+| `2`  | Partial run: some files failed, artifact emitted. |
 
 ---
 
@@ -112,29 +112,24 @@ docs/build/
 
 ## Output examples
 
-### 1. JSON (flatten=node)
+### 1. JSON envelope
 
 ```json
-[
-  {
-    "id": "…",
-    "type": "Module",
-    "name": "utils",
-    "path": "src/repogpt/utils/text_processing.py",
-    "lang": "py",
-    "metrics": { "lines_of_code": 180, "blank_lines": 40 },
-    …
-  },
-  { "id": "…", "type": "Function", "name": "extract_comments", … },
-  …
-]
+{
+  "schema_version": "1",
+  "repo_root": "/abs/path/to/repo",
+  "stats": { "total_files": 3, "ok_files": 2, "failed_files": 1, "emitted_records": 2 },
+  "failures": [{ "record_type": "failure", "path": "bad.py", ... }],
+  "records": [{ "record_type": "node", "type": "module", "path": "src/app.py", ... }]
+}
 ```
 
-### 2. NDJSON (flatten=file)
+### 2. NDJSON
 
 ```text
-{"id":"…","type":"Module", ... ,"path":"README.md","lang":"md"}
-{"id":"…","type":"Module", ... ,"path":"src/repogpt/__init__.py","lang":"py"}
+{"record_type":"node","schema_version":"1","type":"module","path":"README.md","language":"md",...}
+{"record_type":"failure","schema_version":"1","path":"bad.py",...}
+{"record_type":"summary","schema_version":"1","repo_root":"/abs/path/to/repo",...}
 ```
 
 ---
@@ -162,7 +157,7 @@ Capture with `pytest`’s `caplog`, or redirect STDERR to a file in CI.
 
 ```bash
 ruff check .
-mypy src/
+mypy src tests
 pytest -q
 ```
 
@@ -182,34 +177,33 @@ src/repogpt/
 
 ### Extending to another language
 
-1. Create `src/repogpt/adapters/parser/<lang>_parser.py` implementing `parse() → CodeNode`.
+1. Create `src/repogpt/adapters/parser/<lang>_parser.py` implementing `parse() -> CodeNode`.
 2. Register it in `adapters/parser/__init__.py`.
-3. Add extension to docs and tests.
+3. Add docs, tests y un contrato explícito antes de anunciarlo.
 
 ---
 
 ## Tests
 
 ```
-pytest                                 # full unit/integration suite
-pytest tests/test_phase3.py -q         # logging & fail-fast happy-path
+pytest -q
 ```
 
 The suite exercises:
 
 * Collect / ignore rules
-* Markdown & Python parsers (fixtures under `tests/data/`)
-* NDJSON vs JSON writer
-* Fail-fast & debug logging
+* Markdown & Python parsers
+* JSON/NDJSON contract v1
+* CLI exit codes and partial failures
+* Import-path isolation to ensure tests run against this checkout
 
 ---
 
 ## Roadmap
 
-* **Phase 4** – caching by file-hash + parallel workers
-* **Phase 5** – CI (ruff + mypy + pytest), release to PyPI
-* **Phase 6** – plug-in entry-points for custom processors & new languages
-* **Phase 7** – optional HTML / graph visualizer
+* **Next** – richer Python semantics without breaking schema v1
+* **Later** – caching by file-hash + parallel workers
+* **Later** – new languages once they meet the same contract
 
 ---
 
