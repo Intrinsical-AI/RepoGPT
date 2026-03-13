@@ -41,6 +41,7 @@ class CodeNode:
     dependencies: list[dict[str, Any]] = field(default_factory=list)
     parent_id: str | None = None
     children: list[CodeNode] = field(default_factory=list)
+    attributes: dict[str, Any] = field(default_factory=dict)
     metrics: dict[str, Any] = field(default_factory=dict)
 
     def __repr__(self) -> str:  # pragma: no cover

@@ -51,6 +51,15 @@ def main() -> int:  # noqa: D401
         if args.languages
         else None
     )
+    if langs is not None:
+        unsupported = sorted(set(langs) - set(parsers.keys()))
+        if unsupported:
+            parser.error(
+                "unsupported languages: "
+                + ", ".join(unsupported)
+                + "; supported: "
+                + ", ".join(sorted(parsers.keys()))
+            )
     to_stdout = args.stdout or (
         args.output and Path(args.output).as_posix() == "/dev/stdout"
     )
@@ -69,13 +78,11 @@ def main() -> int:  # noqa: D401
 
     log.info("starting run", repo=str(conf.repo_path), format=conf.output_format)
 
-    CodeRepoAnalysisService(
+    return CodeRepoAnalysisService(
         collector=SimpleCollector(),
         pipeline=SimplePipeline(parsers=parsers, processors={}),
         publisher=SimplePublisher(),
     ).run(runtime_conf=conf)
-
-    return 0
 
 
 if __name__ == "__main__":

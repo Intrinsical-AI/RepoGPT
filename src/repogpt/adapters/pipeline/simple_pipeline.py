@@ -42,8 +42,10 @@ class SimplePipeline(PipelinePort):
 
     # ------------------------------------------------------------------
     def process(self, file: Path, conf: AnalysisConf) -> PipelineResult:  # noqa: D401
+        relative_path = file.resolve().relative_to(conf.repo_path.resolve()).as_posix()
         ext = file.suffix.lower().lstrip(".")
         file_info = {
+            "relative_path": relative_path,
             "size": file.stat().st_size,
             "sha256": calculate_file_hash(file),
         }
