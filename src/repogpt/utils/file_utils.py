@@ -1,10 +1,11 @@
 # repogpt/utils/file_utils.py
 
 import hashlib
-import logging
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 CHUNK_SIZE = 8192  # Leer archivos en bloques de 8KB para hashing
 
@@ -27,17 +28,15 @@ def calculate_file_hash(file_path: Path, algorithm: str = "sha256") -> str | Non
                 hasher.update(chunk)
         return hasher.hexdigest()
     except FileNotFoundError:
-        logger.error("Archivo no encontrado al calcular hash: %s", file_path)
+        logger.error("file not found while hashing", path=str(file_path))
     except PermissionError:
-        logger.error("Permiso denegado al calcular hash para: %s", file_path)
+        logger.error("permission denied while hashing", path=str(file_path))
     except OSError as e:
-        logger.error("Error de OS calculando hash para %s: %s", file_path, e)
+        logger.error("os error while hashing", path=str(file_path), error=str(e))
     except ValueError:
-        logger.error("Algoritmo de hash inválido: %s", algorithm)
+        logger.error("invalid hash algorithm", algorithm=algorithm)
     except Exception as e:
-        logger.error(
-            "Error inesperado calculando hash para %s: %s", file_path, e, exc_info=True
-        )
+        logger.exception("unexpected error while hashing", path=str(file_path), error=str(e))
 
     return None
 
@@ -60,30 +59,24 @@ def is_likely_binary(file_path: Path, check_bytes: int = 1024) -> bool:
         with file_path.open("rb") as f:
             chunk = f.read(check_bytes)
             if b"\x00" in chunk:
-                logger.debug(
-                    "Detectado byte NULL en %s, marcando como binario.", file_path
-                )
+                logger.debug("detected null byte", path=str(file_path))
                 return True
             # Podríamos añadir más heurísticas aquí si fuera necesario
             # Por ejemplo, buscar un alto porcentaje de caracteres no imprimibles.
     except FileNotFoundError:
-        logger.warning(
-            "Archivo no encontrado al verificar si es binario: %s", file_path
-        )
+        logger.warning("file not found while checking binary", path=str(file_path))
         return False  # No se puede determinar, asumir no binario por seguridad
     except PermissionError:
-        logger.warning("Permiso denegado al verificar si es binario: %s", file_path)
+        logger.warning("permission denied while checking binary", path=str(file_path))
         return False  # Asumir no binario
     except OSError as e:
-        logger.warning("Error de OS verificando si %s es binario: %s", file_path, e)
+        logger.warning("os error while checking binary", path=str(file_path), error=str(e))
         return False  # Asumir no binario
     except Exception as e:
-        logger.warning(
-            "Error inesperado verificando si %s es binario: %s", file_path, e
-        )
+        logger.warning("unexpected error while checking binary", path=str(file_path), error=str(e))
         return False  # Asumir no binario
 
-    logger.debug("%s no parece binario (basado en byte NULL).", file_path)
+    logger.debug("file does not look binary", path=str(file_path))
     return False
 
 

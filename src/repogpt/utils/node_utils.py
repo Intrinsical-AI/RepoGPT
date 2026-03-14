@@ -17,8 +17,8 @@ def stable_node_id(
             path,
             type_,
             name or "",
-            str(start_line or ""),
-            str(end_line or ""),
+            "" if start_line is None else str(start_line),
+            "" if end_line is None else str(end_line),
             parent_id or "",
         ]
     )

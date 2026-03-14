@@ -15,6 +15,7 @@ class AnalysisConf:
     flatten_kind: str = "node"
     output_format: str = "json"
     to_stdout: bool = False
+    emit_kind: str = "ast"
     # --- phase‑3 ---
     log_level: str = "INFO"  # DEBUG | INFO
     fail_fast: bool = False  # abort on first parser error
@@ -24,6 +25,7 @@ class AnalysisConf:
 class ParserInput:
     file_path: Path
     file_info: dict[str, Any]
+    content: str | None = None
 
 
 @dataclass
@@ -55,6 +57,7 @@ class PipelineResult:
     root: CodeNode | None
     error: str | None = None
     file_info: dict[str, Any] = field(default_factory=dict)
+    content: str | None = None
 
 
 @dataclass
@@ -65,7 +68,7 @@ class CollectionResult:
 
 
 class ParserInterface(Protocol):
-    def parse(self, input: ParserInput) -> CodeNode: ...
+    def parse(self, parser_input: ParserInput) -> CodeNode: ...
 
 
 class ProcessorInterface(Protocol):

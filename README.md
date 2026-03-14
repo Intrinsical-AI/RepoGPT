@@ -68,6 +68,9 @@ repogpt path-to-project/ -o report.json
 # NDJSON streamed to stdout (great for pipes)
 repogpt path-to-project/ --flatten node --format ndjson --stdout | jq 'select(.record_type=="node" and .type=="class")'
 
+# code-units projection for native RAG ingestion
+repogpt path-to-project/ --emit code-units --format json --stdout
+
 ```
 
 ---
@@ -76,6 +79,7 @@ repogpt path-to-project/ --flatten node --format ndjson --stdout | jq 'select(.r
 
 | Flag                       | Default         | Description                                                                                                                     |
 | -------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `--emit {ast,code-units}`  | `ast`           | `ast`: structured tree export.<br>`code-units`: JSON envelope for retrieval/indexing (`Py + Md`, high-signal units only).     |
 | `--flatten {node,file}`    | `node`          | *node*: every node appears as an output record.<br>*file*: only the root node per file is emitted.                               |
 | `--format {json,ndjson}`   | `json`          | *json*: envelope with `stats`, `failures` and `records`.<br>*ndjson*: stream of `node`, `failure` and `summary` records.        |
 | `--stdout`                 | -               | Stream to STDOUT instead of file.<br>Passing `-o /dev/stdout` has the same effect.                                              |
@@ -84,6 +88,8 @@ repogpt path-to-project/ --flatten node --format ndjson --stdout | jq 'select(.r
 | `--include-tests`          | *off*           | Do **not** skip `tests/` or `test_*.py`.                                                                                        |
 | `--log-level {INFO,DEBUG}` | `INFO`          | Structured logs to STDERR.                                                                                                      |
 | `--fail-fast`              | *off*           | Abort on the first parser error (exit 1).                                                                                       |
+
+`--emit code-units` only supports `--format json`.
 
 ### Exit codes
 
@@ -131,6 +137,50 @@ docs/build/
 {"record_type":"failure","schema_version":"1","path":"bad.py",...}
 {"record_type":"summary","schema_version":"1","repo_root":"/abs/path/to/repo",...}
 ```
+
+### 3. Code-units JSON
+
+```json
+{
+  "schema_version": "2",
+  "kind": "code-units",
+  "repo_key": "my-repo",
+  "snapshot_id": "my-repo-4f1f0c9b8d1a2e3f",
+  "scope": "repogpt:my-repo",
+  "stats": { "total_files": 3, "ok_files": 2, "failed_files": 1, "emitted_documents": 4 },
+  "failures": [{ "path": "bad.py", "language": "py", "error": "...", "file": { "sha256": "...", "size": 42 } }],
+  "documents": [
+    {
+      "external_id": "repogpt:my-repo:src/app.py:function:helper",
+      "source_id": "repogpt:my-repo:file:src/app.py",
+      "repo_key": "my-repo",
+      "scope": "repogpt:my-repo",
+      "snapshot_id": "my-repo-4f1f0c9b8d1a2e3f",
+      "path": "src/app.py",
+      "language": "py",
+      "unit_type": "function",
+      "symbol": "helper",
+      "start_line": 1,
+      "end_line": 2,
+      "content": "def helper():\n    return 1\n",
+      "content_hash": "f9f4c6f5d2b8d7c89d8f6d1e8c5dbe4f6f8ed0bdb0d85c6d7d064c93f8b5f4c9",
+      "metadata": {
+        "file": { "sha256": "...", "size": 42 },
+        "tags": [],
+        "attributes": {},
+        "dependencies": []
+      }
+    }
+  ]
+}
+```
+
+`--emit code-units` uses a dedicated public contract in schema `2`:
+
+* `external_id` is semantic and stable per unit, not derived from the internal AST `node.id`.
+* `content_hash` is `sha256(content)` for the exact emitted span and is the per-document change signal.
+* `snapshot_id` remains a repo-snapshot marker based on file hashes; it is provenance, not a per-document delta key.
+* Canonical fields such as `path`, `language`, `unit_type`, `symbol`, `start_line` and `end_line` live at the top level of each document. `metadata` is auxiliary only.
 
 ---
 

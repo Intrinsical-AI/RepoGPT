@@ -10,11 +10,14 @@ from repogpt.utils.text_processing import count_blank_lines, extract_comments
 
 
 class PythonParser(ParserInterface):
-    def parse(self, input: ParserInput) -> CodeNode:
-        path = input.file_path
-        content = path.read_text(encoding="utf-8", errors="replace")
+    def parse(self, parser_input: ParserInput) -> CodeNode:
+        path = parser_input.file_path
+        content = parser_input.content
+        if content is None:
+            content = path.read_text(encoding="utf-8", errors="replace")
         tree = ast.parse(content, filename=str(path))
-        relative_path = str(input.file_info.get("relative_path") or path.as_posix())
+        relative_path = str(parser_input.file_info.get("relative_path") or path.as_posix())
+        total_lines = len(content.splitlines()) or 1
 
         root = CodeNode(
             id=stable_node_id(
@@ -22,7 +25,7 @@ class PythonParser(ParserInterface):
                 type_="module",
                 name=path.stem,
                 start_line=1,
-                end_line=content.count("\n") + 1,
+                end_line=total_lines,
                 parent_id=None,
             ),
             type="module",
@@ -30,7 +33,7 @@ class PythonParser(ParserInterface):
             language="py",
             path=relative_path,
             start_line=1,
-            end_line=content.count("\n") + 1,
+            end_line=total_lines,
             docstring=ast.get_docstring(tree),
             metrics={
                 "blank_lines": count_blank_lines(content),
@@ -129,18 +132,15 @@ class PythonParser(ParserInterface):
         parent_node: CodeNode,
         relative_path: str,
     ) -> CodeNode:
+        imported_names: list[dict[str, Any]] = [
+            {"name": alias.name, "asname": alias.asname} for alias in aliases
+        ]
         attributes = {
             "module": module,
             "import_kind": import_kind,
             "is_relative": is_relative,
-            "imported_names": [
-                {"name": alias.name, "asname": alias.asname} for alias in aliases
-            ],
+            "imported_names": imported_names,
         }
-        imported_names: list[dict[str, Any]] = [
-            {"name": alias.name, "asname": alias.asname} for alias in aliases
-        ]
-        attributes["imported_names"] = imported_names
         return CodeNode(
             id=stable_node_id(
                 path=relative_path,
@@ -199,7 +199,8 @@ class PythonParser(ParserInterface):
         relative_path: str,
     ) -> CodeNode:
         node_type = "method" if parent_node.type == "class" else "function"
-        signature = self._build_signature(node)
+        params = self._extract_params(node.args)
+        signature = self._build_signature(node.name, params, node.returns)
         return CodeNode(
             id=stable_node_id(
                 path=relative_path,
@@ -220,7 +221,7 @@ class PythonParser(ParserInterface):
             attributes={
                 "is_async": isinstance(node, ast.AsyncFunctionDef),
                 "decorators": [self._expr_to_source(dec) for dec in node.decorator_list],
-                "params": self._extract_params(node.args),
+                "params": params,
                 "returns": self._expr_to_source(node.returns),
                 "visibility": self._visibility(node.name),
                 "signature": signature,
@@ -273,10 +274,17 @@ class PythonParser(ParserInterface):
             )
         return params
 
-    def _build_signature(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
+    def _build_signature(
+        self,
+        name: str,
+        extracted_params: list[dict[str, Any]],
+        returns_expr: ast.AST | None,
+    ) -> str:
         params = []
         saw_posonly = False
-        for param in self._extract_params(node.args):
+        saw_vararg = False
+        inserted_kwonly_separator = False
+        for param in extracted_params:
             if param["kind"] == "positional_only":
                 saw_posonly = True
             elif saw_posonly:
@@ -287,10 +295,16 @@ class PythonParser(ParserInterface):
             default = param["default"]
             if param["kind"] == "vararg":
                 rendered = f"*{rendered}"
+                saw_vararg = True
             elif param["kind"] == "kwarg":
                 rendered = f"**{rendered}"
-            elif param["kind"] == "keyword_only" and "*" not in params:
+            elif (
+                param["kind"] == "keyword_only"
+                and not saw_vararg
+                and not inserted_kwonly_separator
+            ):
                 params.append("*")
+                inserted_kwonly_separator = True
             if annotation:
                 rendered = f"{rendered}: {annotation}"
             if default is not None:
@@ -298,8 +312,8 @@ class PythonParser(ParserInterface):
             params.append(rendered)
         if saw_posonly:
             params.append("/")
-        signature = f"{node.name}({', '.join(params)})"
-        returns = self._expr_to_source(node.returns)
+        signature = f"{name}({', '.join(params)})"
+        returns = self._expr_to_source(returns_expr)
         if returns:
             signature = f"{signature} -> {returns}"
         return signature

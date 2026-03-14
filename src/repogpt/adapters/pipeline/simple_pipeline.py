@@ -24,7 +24,7 @@ T_co = TypeVar("T_co", bound=CodeNode)
 
 
 class Parser(Protocol):
-    def parse(self, input: ParserInput) -> CodeNode: ...
+    def parse(self, parser_input: ParserInput) -> CodeNode: ...
 
 
 class Processor(Protocol, Generic[T_co]):
@@ -44,6 +44,7 @@ class SimplePipeline(PipelinePort):
     def process(self, file: Path, conf: AnalysisConf) -> PipelineResult:  # noqa: D401
         relative_path = file.resolve().relative_to(conf.repo_path.resolve()).as_posix()
         ext = file.suffix.lower().lstrip(".")
+        content = file.read_text(encoding="utf-8", errors="replace")
         file_info = {
             "relative_path": relative_path,
             "size": file.stat().st_size,
@@ -58,14 +59,20 @@ class SimplePipeline(PipelinePort):
                 root=None,
                 error="no parser",
                 file_info=file_info,
+                content=content,
             )
 
         try:
-            root = parser.parse(ParserInput(file, file_info))
-            for processor in self.processors.values():
+            root = parser.parse(ParserInput(file, file_info, content))
+            processor = self.processors.get(ext)
+            if processor is not None:
                 root = processor(root)
             return PipelineResult(
-                path=file, language=ext, root=root, file_info=file_info
+                path=file,
+                language=ext,
+                root=root,
+                file_info=file_info,
+                content=content,
             )
         except Exception as exc:  # noqa: BLE001 – queremos capturarlo todo
             tb_short = "\n".join(
@@ -73,5 +80,10 @@ class SimplePipeline(PipelinePort):
             ).strip()
             logger.exception("pipeline error", path=file, error=tb_short)
             return PipelineResult(
-                path=file, language=ext, root=None, error=tb_short, file_info=file_info
+                path=file,
+                language=ext,
+                root=None,
+                error=tb_short,
+                file_info=file_info,
+                content=content,
             )

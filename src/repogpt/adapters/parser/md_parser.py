@@ -13,13 +13,57 @@ class MarkdownParser(ParserInterface):
     LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
     FENCE_RE = re.compile(r"^```([^\s`]*)\s*$")
 
-    def parse(self, input: ParserInput) -> CodeNode:
-        path = input.file_path
-        content = path.read_text(encoding="utf-8", errors="replace")
+    def _close_headings(
+        self, heading_stack: list[CodeNode], *, min_level: int, end_line: int
+    ) -> None:
+        while heading_stack and int(heading_stack[-1].attributes["level"]) >= min_level:
+            heading_stack[-1].end_line = end_line
+            heading_stack.pop()
+
+    def _build_code_block_node(
+        self,
+        *,
+        relative_path: str,
+        parent: CodeNode,
+        start_line: int,
+        end_line: int,
+        fence_language: str | None,
+        is_unclosed: bool = False,
+    ) -> CodeNode:
+        attributes: dict[str, Any] = {"fence_language": fence_language}
+        if is_unclosed:
+            attributes["is_unclosed"] = True
+        return CodeNode(
+            id=stable_node_id(
+                path=relative_path,
+                type_="code_block",
+                name=fence_language,
+                start_line=start_line,
+                end_line=end_line,
+                parent_id=parent.id,
+            ),
+            type="code_block",
+            name=fence_language,
+            language="md",
+            path=relative_path,
+            start_line=start_line,
+            end_line=end_line,
+            parent_id=parent.id,
+            attributes=attributes,
+        )
+
+    def parse(self, parser_input: ParserInput) -> CodeNode:
+        path = parser_input.file_path
+        content = parser_input.content
+        if content is None:
+            content = path.read_text(encoding="utf-8", errors="replace")
         lines = content.splitlines()
         total_lines = max(len(lines), 1)
-        relative_path = str(input.file_info.get("relative_path") or path.as_posix())
+        relative_path = str(parser_input.file_info.get("relative_path") or path.as_posix())
 
+        heading_count = 0
+        code_block_count = 0
+        link_count = 0
         root = CodeNode(
             id=stable_node_id(
                 path=relative_path,
@@ -38,9 +82,9 @@ class MarkdownParser(ParserInterface):
             metrics={
                 "blank_lines": count_blank_lines(content),
                 "non_empty_lines": len([line for line in lines if line.strip()]),
-                "heading_count": 0,
-                "code_block_count": 0,
-                "link_count": 0,
+                "heading_count": heading_count,
+                "code_block_count": code_block_count,
+                "link_count": link_count,
             },
             attributes={"relative_path": relative_path},
         )
@@ -49,12 +93,39 @@ class MarkdownParser(ParserInterface):
         open_code_block: dict[str, Any] | None = None
 
         for line_number, line in enumerate(lines, start=1):
+            fence_match = self.FENCE_RE.match(line)
+            if fence_match:
+                if open_code_block is None:
+                    open_code_block = {
+                        "start_line": line_number,
+                        "fence_language": fence_match.group(1) or None,
+                        "parent": heading_stack[-1] if heading_stack else root,
+                    }
+                else:
+                    code_block = self._build_code_block_node(
+                        relative_path=relative_path,
+                        parent=open_code_block["parent"],
+                        start_line=int(open_code_block["start_line"]),
+                        end_line=line_number,
+                        fence_language=open_code_block["fence_language"],
+                    )
+                    open_code_block["parent"].children.append(code_block)
+                    code_block_count += 1
+                    open_code_block = None
+                continue
+
+            if open_code_block is not None:
+                continue
+
             heading_match = self.HEADING_RE.match(line)
             if heading_match:
                 level = len(heading_match.group(1))
                 title = heading_match.group(2).strip()
-                while heading_stack and int(heading_stack[-1].attributes["level"]) >= level:
-                    heading_stack.pop()
+                self._close_headings(
+                    heading_stack,
+                    min_level=level,
+                    end_line=line_number - 1,
+                )
                 parent = heading_stack[-1] if heading_stack else root
                 node = CodeNode(
                     id=stable_node_id(
@@ -76,42 +147,8 @@ class MarkdownParser(ParserInterface):
                 )
                 parent.children.append(node)
                 heading_stack.append(node)
-                root.metrics["heading_count"] = int(root.metrics["heading_count"]) + 1
+                heading_count += 1
                 continue
-
-            fence_match = self.FENCE_RE.match(line)
-            if fence_match:
-                if open_code_block is None:
-                    open_code_block = {
-                        "start_line": line_number,
-                        "fence_language": fence_match.group(1) or None,
-                        "parent": heading_stack[-1] if heading_stack else root,
-                    }
-                else:
-                    parent = open_code_block["parent"]
-                    code_block = CodeNode(
-                        id=stable_node_id(
-                            path=relative_path,
-                            type_="code_block",
-                            name=open_code_block["fence_language"],
-                            start_line=int(open_code_block["start_line"]),
-                            end_line=line_number,
-                            parent_id=parent.id,
-                        ),
-                        type="code_block",
-                        name=open_code_block["fence_language"],
-                        language="md",
-                        path=relative_path,
-                        start_line=int(open_code_block["start_line"]),
-                        end_line=line_number,
-                        parent_id=parent.id,
-                        attributes={
-                            "fence_language": open_code_block["fence_language"],
-                        },
-                    )
-                    parent.children.append(code_block)
-                    root.metrics["code_block_count"] = int(root.metrics["code_block_count"]) + 1
-                    open_code_block = None
 
             for link_match in self.LINK_RE.finditer(line):
                 parent = heading_stack[-1] if heading_stack else root
@@ -135,7 +172,24 @@ class MarkdownParser(ParserInterface):
                     dependencies=[{"text": link_match.group(1), "url": link_match.group(2)}],
                 )
                 parent.children.append(link_node)
-                root.metrics["link_count"] = int(root.metrics["link_count"]) + 1
+                link_count += 1
+
+        if open_code_block is not None:
+            code_block = self._build_code_block_node(
+                relative_path=relative_path,
+                parent=open_code_block["parent"],
+                start_line=int(open_code_block["start_line"]),
+                end_line=total_lines,
+                fence_language=open_code_block["fence_language"],
+                is_unclosed=True,
+            )
+            open_code_block["parent"].children.append(code_block)
+            code_block_count += 1
+
+        self._close_headings(heading_stack, min_level=1, end_line=total_lines)
+        root.metrics["heading_count"] = heading_count
+        root.metrics["code_block_count"] = code_block_count
+        root.metrics["link_count"] = link_count
 
         comments = extract_comments(content, language="markdown")
         root.comments.extend(comments)

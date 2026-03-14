@@ -40,23 +40,25 @@ def load_pathspec(repo_root: Path) -> pathspec.PathSpec | None:
     return None
 
 
+def ignore_reason(
+    p: Path, repo_root: Path, spec: pathspec.PathSpec | None = None
+) -> str | None:
+    """Return the first ignore reason that applies to a path, if any."""
+    rel = p.relative_to(repo_root)
+    if any(part in DEFAULT_IGNORES for part in rel.parts):
+        return "default_ignore"
+    if p.is_symlink():
+        return "symlink"
+    if spec and spec.match_file(str(rel)):
+        return "repogptignore"
+    return None
+
+
 def should_ignore(
     p: Path, repo_root: Path, spec: pathspec.PathSpec | None = None
 ) -> bool:
-    rel = p.relative_to(repo_root)
-    # Hardcoded ignores: cualquier parte del path
-    if any(part in DEFAULT_IGNORES for part in rel.parts):
-        return True
-    # Archivos/carpetas ocultas (excepto el root)
-    if any(part.startswith(".") and part != "." for part in rel.parts):
-        return True
-    # Symlinks (no seguimos)
-    if p.is_symlink():
-        return True
-    # pathspec patterns (si .repogptignore existe)
-    if spec and spec.match_file(str(rel)):
-        return True
-    return False
+    """Return True when a path should be excluded by built-ins or ignore rules."""
+    return ignore_reason(p, repo_root, spec) is not None
 
 
 class SimpleCollector(CollectorPort):
@@ -71,38 +73,45 @@ class SimpleCollector(CollectorPort):
                 f"Repository path '{repo_root}' is not a directory"
             )
 
-        allowed_exts = set(conf.languages or parsers.keys())
+        allowed_exts = (
+            set(conf.languages) if conf.languages is not None else set(parsers.keys())
+        )
         spec = load_pathspec(repo_root)
         files: list[Path] = []
         skipped: list[Path] = []
         slogger = structlog.get_logger(__name__)
-        for p in repo_root.rglob("*"):
-            # Ignorar directorios, symlinks y patrones .repogptignore
-            if should_ignore(p, repo_root, spec):
-                slogger.debug("skip", path=str(p), reason="ignored")
-                skipped.append(p)
+        paths = sorted(
+            repo_root.rglob("*"),
+            key=lambda path: path.relative_to(repo_root).as_posix(),
+        )
+        for p in paths:
+            reason = ignore_reason(p, repo_root, spec)
+            if reason is not None:
+                slogger.debug("skip", path=str(p), reason=reason)
+                if p.is_file():
+                    skipped.append(p)
                 continue
             if not p.is_file():
                 continue
-            # Solo extensiones soportadas (puedes cambiar según tus parsers)
-            allowed_exts = set(
-                conf.languages or parsers.keys()
-            )  # parsers importado abajo
             if p.suffix.lstrip(".").lower() not in allowed_exts:
-                slogger.debug("skip", path=str(p), reason="ignored")
+                slogger.debug("skip", path=str(p), reason="unsupported_extension")
                 skipped.append(p)
                 continue
             # Excluye tests si así lo pide la conf
             if not conf.include_tests:
                 filename = p.parts[-1]
                 if "tests" in p.parts or filename.startswith(("test_", "test-")):
-                    slogger.debug("skip", path=str(p), reason="ignored")
+                    slogger.debug("skip", path=str(p), reason="tests_excluded")
                     skipped.append(p)
                     continue
 
             # Filtrar por tamaño y binarios
-            if p.stat().st_size > conf.max_file_size or is_likely_binary(p):
-                slogger.debug("skip", path=str(p), reason="ignored")
+            if p.stat().st_size > conf.max_file_size:
+                slogger.debug("skip", path=str(p), reason="file_too_large")
+                skipped.append(p)
+                continue
+            if is_likely_binary(p):
+                slogger.debug("skip", path=str(p), reason="binary_file")
                 skipped.append(p)
                 continue
             files.append(p)

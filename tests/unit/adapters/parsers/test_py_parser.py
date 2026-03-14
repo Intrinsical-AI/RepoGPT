@@ -91,6 +91,23 @@ def test_python_ids_are_deterministic() -> None:
     assert [node["id"] for node in first] == [node["id"] for node in second]
 
 
+def test_python_signature_with_vararg_and_keyword_only_is_valid(tmp_path: Path) -> None:
+    parser = PythonParser()
+    fixture = tmp_path / "tmp_signature.py"
+    fixture.write_text(
+        "def foo(*args, kw: int, **kwargs) -> None:\n"
+        "    return None\n",
+        encoding="utf-8",
+    )
+    root = parser.parse(
+        ParserInput(file_path=fixture, file_info={"relative_path": "tmp_signature.py"})
+    )
+
+    function = next(child for child in root.children if child.type == "function")
+
+    assert function.attributes["signature"] == "foo(*args, kw: int, **kwargs) -> None"
+
+
 def test_python_metrics_and_unicode_comments() -> None:
     root = _parse("edge_cases_comments.py")
     comments = [comment["text"] for comment in all_comments(root)]
@@ -99,3 +116,14 @@ def test_python_metrics_and_unicode_comments() -> None:
     assert any("áéíóú" in text for text in comments)
     assert any("😊" in text for text in comments)
     assert any("FIXME" in text for text in comments)
+
+
+def test_python_module_end_line_handles_trailing_newline(tmp_path: Path) -> None:
+    fixture = tmp_path / "trailing.py"
+    fixture.write_text("line1\nline2\n", encoding="utf-8")
+
+    root = PythonParser().parse(
+        ParserInput(file_path=fixture, file_info={"relative_path": "trailing.py"})
+    )
+
+    assert root.end_line == 2

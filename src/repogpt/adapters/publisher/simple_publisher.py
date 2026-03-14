@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import os
 import sys
 from collections.abc import Generator, Iterable
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -91,9 +91,7 @@ class SimplePublisher(PublisherPort):
             emitted_records=len(node_records),
         )
 
-        sink_stdout = conf.to_stdout or (
-            conf.output is None and conf.output_format == "ndjson"
-        )
+        sink_stdout = conf.to_stdout
         if sink_stdout:
             self._write_stream(
                 node_records=node_records,
@@ -102,8 +100,8 @@ class SimplePublisher(PublisherPort):
                 conf=conf,
             )
         else:
-            output_path = conf.output or os.path.join(os.getcwd(), "analysis.json")
-            with open(output_path, "w", encoding="utf-8") as handle:
+            output_path = conf.output or Path.cwd() / "analysis.json"
+            with output_path.open("w", encoding="utf-8") as handle:
                 if conf.output_format == "json":
                     json.dump(
                         {
@@ -126,7 +124,7 @@ class SimplePublisher(PublisherPort):
                         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
             logger.info(
                 "analysis saved",
-                path=output_path,
+                path=str(output_path),
                 ok=summary["stats"]["ok_files"],
                 fails=summary["stats"]["failed_files"],
             )
