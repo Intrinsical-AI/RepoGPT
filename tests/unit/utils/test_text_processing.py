@@ -1,4 +1,7 @@
 import os
+import tokenize
+
+import pytest
 
 from repogpt.utils.text_processing import (
     count_blank_lines,
@@ -108,3 +111,29 @@ def test_comments_edge_cases_md() -> None:
     assert any("emoji" in t or "🎉" in t for t in texts)
     assert any("caracteres raros" in t for t in texts)
     assert any("ComentarioSinEspacios" in t for t in texts)
+
+
+def test_extract_comments_logs_debug_when_python_tokenization_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    logged: list[dict[str, str]] = []
+
+    class DummyLogger:
+        def debug(self, event: str, **kwargs: str) -> None:
+            logged.append({"event": event, **kwargs})
+
+    def boom(readline):  # type: ignore[no-untyped-def]
+        raise tokenize.TokenError("broken", (1, 0))
+
+    monkeypatch.setattr("repogpt.utils.text_processing.logger", DummyLogger())
+    monkeypatch.setattr("repogpt.utils.text_processing.tokenize.generate_tokens", boom)
+
+    comments = extract_comments("x=1", language="python")
+
+    assert comments == []
+    assert logged == [
+        {
+            "event": "python comment extraction failed",
+            "error": "('broken', (1, 0))",
+        }
+    ]

@@ -3,16 +3,16 @@ repos:
     rev: 24.3.0
     hooks:
       - id: black
-        exclude: 'tests/data/'
+        exclude: 'tests/(data|fixtures)/'
 
   - repo: https://github.com/charliermarsh/ruff-pre-commit
     rev: v0.4.4
     hooks:
       - id: ruff
-        exclude: 'tests/data/'
+        exclude: 'tests/(data|fixtures)/'
 
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.8.0
     hooks:
       - id: mypy
-        exclude: 'tests/data/'
+        exclude: 'tests/(data|fixtures)/'

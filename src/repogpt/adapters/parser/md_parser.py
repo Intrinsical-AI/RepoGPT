@@ -1,115 +1,211 @@
-# repogpt/adapters/parser/md_parser.py
+from __future__ import annotations
+
 import re
-from uuid import uuid4
+from typing import Any
 
 from repogpt.models import CodeNode, ParserInput, ParserInterface
+from repogpt.utils.node_utils import stable_node_id
 from repogpt.utils.text_processing import count_blank_lines, extract_comments
 
 
 class MarkdownParser(ParserInterface):
-    """Parser para archivos Markdown, construye un árbol de CodeNode."""
-
-    HEADING_RE = re.compile(r"^(#+)\s+(.*)$", re.MULTILINE)
+    HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
     LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
-    FENCE_RE = re.compile(r"^```", re.MULTILINE)
+    FENCE_RE = re.compile(r"^```([^\s`]*)\s*$")
 
-    def __init__(self) -> None:
-        """Initialize the Markdown parser."""
-        pass
+    def _close_headings(
+        self, heading_stack: list[CodeNode], *, min_level: int, end_line: int
+    ) -> None:
+        while heading_stack and int(heading_stack[-1].attributes["level"]) >= min_level:
+            heading_stack[-1].end_line = end_line
+            heading_stack.pop()
 
-    def parse(self, input: ParserInput) -> CodeNode:
-        """
-        Parse a Markdown file and build a CodeNode tree.
+    def _build_code_block_node(
+        self,
+        *,
+        relative_path: str,
+        parent: CodeNode,
+        start_line: int,
+        end_line: int,
+        fence_language: str | None,
+        is_unclosed: bool = False,
+    ) -> CodeNode:
+        attributes: dict[str, Any] = {"fence_language": fence_language}
+        if is_unclosed:
+            attributes["is_unclosed"] = True
+        return CodeNode(
+            id=stable_node_id(
+                path=relative_path,
+                type_="code_block",
+                name=fence_language,
+                start_line=start_line,
+                end_line=end_line,
+                parent_id=parent.id,
+            ),
+            type="code_block",
+            name=fence_language,
+            language="md",
+            path=relative_path,
+            start_line=start_line,
+            end_line=end_line,
+            parent_id=parent.id,
+            attributes=attributes,
+        )
 
-        Args:
-            input: ParserInput containing the file path and info
-
-        Returns:
-            CodeNode: Root node of the parsed tree
-        """
-        path = input.file_path
-        content = path.read_text(encoding="utf-8", errors="replace")
+    def parse(self, parser_input: ParserInput) -> CodeNode:
+        path = parser_input.file_path
+        content = parser_input.content
+        if content is None:
+            content = path.read_text(encoding="utf-8", errors="replace")
         lines = content.splitlines()
-        total_lines = len(lines)
+        total_lines = max(len(lines), 1)
+        relative_path = str(
+            parser_input.file_info.get("relative_path") or path.as_posix()
+        )
 
+        heading_count = 0
+        code_block_count = 0
+        link_count = 0
         root = CodeNode(
-            id=str(uuid4()),
-            type="Module",
+            id=stable_node_id(
+                path=relative_path,
+                type_="module",
+                name=path.stem,
+                start_line=1,
+                end_line=total_lines,
+                parent_id=None,
+            ),
+            type="module",
             name=path.stem,
-            language="markdown",
-            path=str(path),
+            language="md",
+            path=relative_path,
             start_line=1,
             end_line=total_lines,
             metrics={
                 "blank_lines": count_blank_lines(content),
-                "lines_of_code": len([line for line in lines if line.strip()]),
+                "non_empty_lines": len([line for line in lines if line.strip()]),
+                "heading_count": heading_count,
+                "code_block_count": code_block_count,
+                "link_count": link_count,
             },
+            attributes={"relative_path": relative_path},
         )
 
-        # 1. Headings como nodos hijos
-        headings = [
-            {
-                "level": len(m.group(1)),
-                "title": m.group(2).strip(),
-                "start_line": content.count("\n", 0, m.start()) + 1,
-            }
-            for m in self.HEADING_RE.finditer(content)
-        ]
-        for h in headings:
-            root.children.append(
-                CodeNode(
-                    id=str(uuid4()),
-                    type="Heading",
-                    name=str(h["title"]),
-                    language="markdown",
-                    path=root.path,
-                    start_line=int(h["start_line"]),
-                    end_line=int(
-                        h["start_line"]
-                    ),  # No sabemos el rango, solo el inicio
-                    parent_id=root.id,
-                    metrics={"level": h["level"]},
-                )
-            )
+        heading_stack: list[CodeNode] = []
+        open_code_block: dict[str, Any] | None = None
 
-        # 2. Links como dependencias
-        for m in self.LINK_RE.finditer(content):
-            root.dependencies.append({"text": m.group(1), "url": m.group(2)})
-
-        # 3. Code blocks como hijos anónimos
-        code_blocks = []
-        for m in self.FENCE_RE.finditer(content):
-            code_blocks.append(content.count("\n", 0, m.start()) + 1)
-        # Group code blocks by pairs (start, end)
-        for i in range(0, len(code_blocks), 2):
-            try:
-                start = code_blocks[i]
-                end = code_blocks[i + 1]
-                root.children.append(
-                    CodeNode(
-                        id=str(uuid4()),
-                        type="CodeBlock",
-                        name=None,
-                        language="markdown",
-                        path=root.path,
-                        start_line=start,
-                        end_line=end,
-                        parent_id=root.id,
+        for line_number, line in enumerate(lines, start=1):
+            fence_match = self.FENCE_RE.match(line)
+            if fence_match:
+                if open_code_block is None:
+                    open_code_block = {
+                        "start_line": line_number,
+                        "fence_language": fence_match.group(1) or None,
+                        "parent": heading_stack[-1] if heading_stack else root,
+                    }
+                else:
+                    code_block = self._build_code_block_node(
+                        relative_path=relative_path,
+                        parent=open_code_block["parent"],
+                        start_line=int(open_code_block["start_line"]),
+                        end_line=line_number,
+                        fence_language=open_code_block["fence_language"],
                     )
-                )
-            except IndexError:
-                # Unmatched ```
+                    open_code_block["parent"].children.append(code_block)
+                    code_block_count += 1
+                    open_code_block = None
                 continue
 
-        # 4. Comentarios HTML
-        comments = extract_comments(content, language="markdown")
-        for c in comments:
-            root.comments.append(c)
-            # Extra tags tipo TODO/FIXME
-            text = c["text"].lower()
-            if "todo" in text:
-                root.tags.append("TODO")
-            if "fixme" in text:
-                root.tags.append("FIXME")
+            if open_code_block is not None:
+                continue
 
+            heading_match = self.HEADING_RE.match(line)
+            if heading_match:
+                level = len(heading_match.group(1))
+                title = heading_match.group(2).strip()
+                self._close_headings(
+                    heading_stack,
+                    min_level=level,
+                    end_line=line_number - 1,
+                )
+                parent = heading_stack[-1] if heading_stack else root
+                node = CodeNode(
+                    id=stable_node_id(
+                        path=relative_path,
+                        type_="heading",
+                        name=title,
+                        start_line=line_number,
+                        end_line=line_number,
+                        parent_id=parent.id,
+                    ),
+                    type="heading",
+                    name=title,
+                    language="md",
+                    path=relative_path,
+                    start_line=line_number,
+                    end_line=line_number,
+                    parent_id=parent.id,
+                    attributes={"level": level},
+                )
+                parent.children.append(node)
+                heading_stack.append(node)
+                heading_count += 1
+                continue
+
+            for link_match in self.LINK_RE.finditer(line):
+                parent = heading_stack[-1] if heading_stack else root
+                link_node = CodeNode(
+                    id=stable_node_id(
+                        path=relative_path,
+                        type_="link",
+                        name=link_match.group(1),
+                        start_line=line_number,
+                        end_line=line_number,
+                        parent_id=parent.id,
+                    ),
+                    type="link",
+                    name=link_match.group(1),
+                    language="md",
+                    path=relative_path,
+                    start_line=line_number,
+                    end_line=line_number,
+                    parent_id=parent.id,
+                    attributes={
+                        "text": link_match.group(1),
+                        "url": link_match.group(2),
+                    },
+                    dependencies=[
+                        {"text": link_match.group(1), "url": link_match.group(2)}
+                    ],
+                )
+                parent.children.append(link_node)
+                link_count += 1
+
+        if open_code_block is not None:
+            code_block = self._build_code_block_node(
+                relative_path=relative_path,
+                parent=open_code_block["parent"],
+                start_line=int(open_code_block["start_line"]),
+                end_line=total_lines,
+                fence_language=open_code_block["fence_language"],
+                is_unclosed=True,
+            )
+            open_code_block["parent"].children.append(code_block)
+            code_block_count += 1
+
+        self._close_headings(heading_stack, min_level=1, end_line=total_lines)
+        root.metrics["heading_count"] = heading_count
+        root.metrics["code_block_count"] = code_block_count
+        root.metrics["link_count"] = link_count
+
+        comments = extract_comments(content, language="markdown")
+        root.comments.extend(comments)
+        dedup_tags: list[str] = []
+        for comment in comments:
+            lowered = str(comment["text"]).lower()
+            if "todo" in lowered and "TODO" not in dedup_tags:
+                dedup_tags.append("TODO")
+            if "fixme" in lowered and "FIXME" not in dedup_tags:
+                dedup_tags.append("FIXME")
+        root.tags = dedup_tags
         return root

@@ -5,6 +5,10 @@ import re
 import tokenize
 from typing import Any
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 
 def count_blank_lines(text: str) -> int:
     """Cuenta líneas completamente en blanco."""
@@ -29,8 +33,11 @@ def extract_comments(content: str, language: str = "python") -> list[dict[str, A
                             "line": start[0],
                         }
                     )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(
+                "python comment extraction failed",
+                error=str(exc),
+            )
     elif language == "markdown":
         # Busca <!-- ... --> comentarios HTML
         for match in re.finditer(r"<!--(.*?)-->", content, re.DOTALL):

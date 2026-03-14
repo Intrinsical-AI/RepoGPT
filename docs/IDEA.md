@@ -1,9 +1,14 @@
 # RepoGPT
 
-Quick generation of project or repository summaries, suitable for consumption by chatgpt, without the need for additional context
+RepoGPT produce artefactos estructurados y deterministas para `Py + Md`.
 
-OUTPUT STRUCTURE:
+Contrato v1:
+- `json`: envelope con `schema_version`, `repo_root`, `stats`, `failures`, `records`
+- `ndjson`: registros `node`, `failure`, `summary`
+- `path`: siempre relativo al repo
+- `id`: determinista por nodo
 
-1. PROJECT SUMMARY - README.MD / IDEA.MD
-2. IMPLEMENTATION SUMMARY - DEVELPING.md, PROJECT STRUCTURE (improved tree command, with number of lines per file),
-3. SUMMARY OF EACH FILE: functionality (extract from: header + docstrings if any), and name the classes and functions by class.
+Objetivo inmediato:
+1. servir como fuente fiable para RAG y evaluación
+2. exponer árboles útiles de Python y Markdown
+3. reflejar fallos parciales en el artefacto, no sólo en logs

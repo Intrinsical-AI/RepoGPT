@@ -1,7 +1,7 @@
 ## **Aspectos a Considerar / Posibles Desafíos**
 
 * **Soporte de Lenguajes:**
-  El principal desafío será siempre la implementación de parsers robustos y completos para cada lenguaje. Aunque la arquitectura del proyecto lo facilita (vía puertos y adaptadores), cada lenguaje añade una complejidad significativa y requiere esfuerzos de mantenimiento continuo. La diferencia sintáctica y semántica puede exigir modelos de árbol adaptados por lenguaje, aunque la estructura general sea común.
+  En el corto plazo el foco es `Py + Md`. Cualquier lenguaje adicional sólo entra cuando tenga parser, tests y contrato de salida al mismo nivel de estabilidad.
 
 * **Complejidad de Implementación de "Vistas" (Views/Projections):**
   ¿Cuán sencillo será para un usuario definir una “vista” personalizada del código (por ejemplo: solo imports, solo clases, funciones + docstrings, etc)?
@@ -20,7 +20,7 @@
 * **Madurez y Calidad de los Parsers:**
   Toda la calidad de la extracción depende de los parsers (AST, tokenización, heurística).
 
-  * Para Python hay soporte nativo en la stdlib, pero para JS, TS, Go, Java puede ser necesario integrar tree-sitter, parsers externos, o combinar técnicas.
+  * Para Python hay soporte nativo en la stdlib. Markdown requiere heurística propia y golden tests para no degradar el árbol.
   * El parser debe estar muy probado con “edge cases” reales (véase la carpeta de fixtures).
 
 * **Competencia / Alternativas:**
@@ -52,14 +52,14 @@
 3. **UI/UX interactivo**
 
    * Webapp ligera con vistas filtrables (imports, TODOs, docstrings)
-   * Integración con VSCode/JetBrains como plugin
+   * Integración con IDE sólo después de fijar el contrato del artefacto
 
 4. **Estrategia de lanzamiento incremental**
 
-   * Priorizar adaptadores de JS/TS y Go (lenguajes muy usados)
-   * Crear ejemplos de casos de uso concretos (auditorías de seguridad, migraciones de versiones…)
+   * Consolidar `Py + Md` antes de abrir nuevos lenguajes
+   * Crear ejemplos de casos de uso concretos (RAG de código, auditorías, diffs estructurados)
 
 5. **Ecosistema y colaboración**
 
-   * Documentar claramente la API de adaptadores y procesadores para que la comunidad aporte nuevos lenguajes
-   * Repositorio de “procesadores” comunitarios (análisis de licencias, detección de patrones de diseño…)
+   * Documentar claramente la API de adaptadores y procesadores
+   * Abrir extensibilidad real sólo cuando el esquema v1 haya demostrado estabilidad

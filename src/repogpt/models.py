@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 
 @dataclass
@@ -15,6 +15,7 @@ class AnalysisConf:
     flatten_kind: str = "node"
     output_format: str = "json"
     to_stdout: bool = False
+    emit_kind: Literal["ast", "code-units"] = "ast"
     # --- phase‑3 ---
     log_level: str = "INFO"  # DEBUG | INFO
     fail_fast: bool = False  # abort on first parser error
@@ -24,6 +25,7 @@ class AnalysisConf:
 class ParserInput:
     file_path: Path
     file_info: dict[str, Any]
+    content: str | None = None
 
 
 @dataclass
@@ -41,6 +43,7 @@ class CodeNode:
     dependencies: list[dict[str, Any]] = field(default_factory=list)
     parent_id: str | None = None
     children: list[CodeNode] = field(default_factory=list)
+    attributes: dict[str, Any] = field(default_factory=dict)
     metrics: dict[str, Any] = field(default_factory=dict)
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -54,6 +57,7 @@ class PipelineResult:
     root: CodeNode | None
     error: str | None = None
     file_info: dict[str, Any] = field(default_factory=dict)
+    content: str | None = None
 
 
 @dataclass
@@ -64,7 +68,7 @@ class CollectionResult:
 
 
 class ParserInterface(Protocol):
-    def parse(self, input: ParserInput) -> CodeNode: ...
+    def parse(self, parser_input: ParserInput) -> CodeNode: ...
 
 
 class ProcessorInterface(Protocol):

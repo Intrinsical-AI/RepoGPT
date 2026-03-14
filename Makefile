@@ -1,7 +1,7 @@
 .PHONY: test lint type cov
 
 lint:
-	ruff check src tests --fix
+	ruff check .
 
 type:
 	mypy src tests
@@ -13,7 +13,7 @@ type:
 
 
 test:
-	pytest tests/ -v
+	pytest -q
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +
@@ -21,4 +21,4 @@ clean:
 	find . -type f -name "*.pyc" -delete
 
 repogpt:
-	python -m repogpt.app.cli:main
+	python -m repogpt.app.cli

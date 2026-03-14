@@ -1,12 +1,10 @@
-"""Publisher que soporta JSON, NDJSON y STDOUT."""
-
 from __future__ import annotations
 
 import dataclasses
 import json
-import os
 import sys
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -15,86 +13,170 @@ from repogpt.core.ports import PublisherPort
 from repogpt.models import AnalysisConf, PipelineResult
 from repogpt.utils.tree_utils import flatten_tree
 
+SCHEMA_VERSION = "1"
 logger = structlog.get_logger(__name__)
 
 
 class SimplePublisher(PublisherPort):
-    def _yield_serialized_nodes(
-        self, r: PipelineResult, conf: AnalysisConf
+    def _yield_node_records(
+        self, result: PipelineResult, conf: AnalysisConf
     ) -> Generator[dict[str, Any], None, None]:
-        """Genera los objetos listos para json.dumps según flatten_kind."""
-        if r.root is None:
-            return  # fail handled elsewhere
-
-        root = r.root
-        if conf.flatten_kind == "node":
-            nodes = flatten_tree(root)
-        else:  # file
-            nodes = [dataclasses.asdict(root)]
-
+        if result.root is None:
+            return
+        nodes = (
+            flatten_tree(result.root)
+            if conf.flatten_kind == "node"
+            else [dataclasses.asdict(result.root)]
+        )
         for node in nodes:
-            node.update(
-                {
-                    "path": str(r.path),
-                    "lang": r.language,
-                    **r.file_info,
-                }
-            )
-            yield node
+            yield {
+                "record_type": "node",
+                "schema_version": SCHEMA_VERSION,
+                **node,
+                "path": str(
+                    result.file_info.get("relative_path") or node.get("path") or ""
+                ),
+                "file": {
+                    "size": result.file_info.get("size"),
+                    "sha256": result.file_info.get("sha256"),
+                },
+            }
 
-    # ------------------------------------------------------------------
+    def _failure_record(self, result: PipelineResult) -> dict[str, Any]:
+        return {
+            "record_type": "failure",
+            "schema_version": SCHEMA_VERSION,
+            "path": str(
+                result.file_info.get("relative_path") or result.path.as_posix()
+            ),
+            "language": result.language,
+            "error": result.error,
+            "file": {
+                "size": result.file_info.get("size"),
+                "sha256": result.file_info.get("sha256"),
+            },
+        }
+
+    def _summary_record(
+        self,
+        *,
+        conf: AnalysisConf,
+        total_files: int,
+        ok_files: int,
+        failed_files: int,
+        emitted_records: int,
+    ) -> dict[str, Any]:
+        return {
+            "record_type": "summary",
+            "schema_version": SCHEMA_VERSION,
+            "repo_root": conf.repo_path.resolve().as_posix(),
+            "stats": {
+                "total_files": total_files,
+                "ok_files": ok_files,
+                "failed_files": failed_files,
+                "emitted_records": emitted_records,
+            },
+        }
+
     def publish(
         self, results: list[PipelineResult], conf: AnalysisConf
     ) -> None:  # noqa: D401
-        data_iterables: list[Generator[dict[str, Any], None, None]] = []
-        failures = []
-
-        for res in results:
-            if res.root is None:
-                failures.append({"path": str(res.path), "error": res.error})
-                continue
-            data_iterables.append(self._yield_serialized_nodes(res, conf))
-
-        def line_iter() -> Generator[dict[str, Any], None, None]:
-            for it in data_iterables:
-                yield from it
-
-        # Decide sink ---------------------------------------------------
-        sink_stdout = (
-            conf.to_stdout or conf.output is None and conf.output_format == "ndjson"
+        node_records = [
+            node
+            for result in results
+            for node in self._yield_node_records(result, conf)
+        ]
+        failure_records = [
+            self._failure_record(result) for result in results if result.root is None
+        ]
+        summary = self._summary_record(
+            conf=conf,
+            total_files=len(results),
+            ok_files=len(results) - len(failure_records),
+            failed_files=len(failure_records),
+            emitted_records=len(node_records),
         )
+
+        sink_stdout = conf.to_stdout
         if sink_stdout:
-            self._write_stream(line_iter(), conf)
+            self._write_stream(
+                node_records=node_records,
+                failure_records=failure_records,
+                summary=summary,
+                conf=conf,
+            )
         else:
-            output_path = conf.output or os.path.join(os.getcwd(), "analysis.json")
-            with open(output_path, "w", encoding="utf-8") as fh:
+            output_path = conf.output or Path.cwd() / "analysis.json"
+            with output_path.open("w", encoding="utf-8") as handle:
                 if conf.output_format == "json":
-                    json.dump(list(line_iter()), fh, ensure_ascii=False, indent=2)
-                else:  # ndjson
-                    for obj in line_iter():
-                        fh.write(json.dumps(obj, ensure_ascii=False) + "\n")
+                    json.dump(
+                        {
+                            "schema_version": SCHEMA_VERSION,
+                            "repo_root": conf.repo_path.resolve().as_posix(),
+                            "stats": summary["stats"],
+                            "failures": failure_records,
+                            "records": node_records,
+                        },
+                        handle,
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                else:
+                    for record in self._iter_ndjson_records(
+                        node_records=node_records,
+                        failure_records=failure_records,
+                        summary=summary,
+                    ):
+                        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
             logger.info(
                 "analysis saved",
-                path=output_path,
-                ok=len(results) - len(failures),
-                fails=len(failures),
+                path=str(output_path),
+                ok=summary["stats"]["ok_files"],
+                fails=summary["stats"]["failed_files"],
             )
 
-        if failures:
-            print("Failed files:", file=sys.stderr)
-            for f in failures:
-                logger.error("parse error", **f)
+        for failure in failure_records:
+            logger.error("parse error", path=failure["path"], error=failure["error"])
 
-    # ------------------------------------------------------------------
-    @staticmethod
+    def _iter_ndjson_records(
+        self,
+        *,
+        node_records: Iterable[dict[str, Any]],
+        failure_records: Iterable[dict[str, Any]],
+        summary: dict[str, Any],
+    ) -> Generator[dict[str, Any], None, None]:
+        yield from node_records
+        yield from failure_records
+        yield summary
+
     def _write_stream(
-        objs: Generator[dict[str, Any], None, None], conf: AnalysisConf
+        self,
+        *,
+        node_records: list[dict[str, Any]],
+        failure_records: list[dict[str, Any]],
+        summary: dict[str, Any],
+        conf: AnalysisConf,
     ) -> None:
-        """Escribe a stdout según formato."""
         stream = sys.stdout
         if conf.output_format == "json":
-            json.dump(list(objs), stream, ensure_ascii=False, indent=2)
+            json.dump(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "repo_root": conf.repo_path.resolve().as_posix(),
+                    "stats": summary["stats"],
+                    "failures": failure_records,
+                    "records": node_records,
+                },
+                stream,
+                ensure_ascii=False,
+                indent=2,
+            )
             stream.write("\n")
-        else:  # ndjson
-            for obj in objs:
-                stream.write(json.dumps(obj, ensure_ascii=False) + "\n")
+            return
+
+        for record in self._iter_ndjson_records(
+            node_records=node_records,
+            failure_records=failure_records,
+            summary=summary,
+        ):
+            stream.write(json.dumps(record, ensure_ascii=False) + "\n")
