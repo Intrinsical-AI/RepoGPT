@@ -85,7 +85,7 @@ repogpt path-to-project/ --emit code-units --format json --stdout
 | `--stdout`                 | -               | Stream to STDOUT instead of file.<br>Passing `-o /dev/stdout` has the same effect.                                              |
 | `-o, --output PATH`        | `analysis.json` | Destination file (ignored if `--stdout`).                                                                                       |
 | `--languages "py,md"`      | all parsers     | Comma-separated, case-insensitive whitelist of supported languages.                                                             |
-| `--include-tests`          | *off*           | Do **not** skip `tests/` or `test_*.py`.                                                                                        |
+| `--include-tests`          | *off*           | Do **not** skip `tests/` directories, `test_*.py`, or `test-*.py` files.                                                       |
 | `--log-level {INFO,DEBUG}` | `INFO`          | Structured logs to STDERR.                                                                                                      |
 | `--fail-fast`              | *off*           | Abort on the first parser error (exit 1).                                                                                       |
 
@@ -93,17 +93,27 @@ repogpt path-to-project/ --emit code-units --format json --stdout
 
 ### Exit codes
 
-| Code | Meaning                                         |
-| ---- | ----------------------------------------------- |
-| `0`  | All requested files parsed successfully.        |
-| `1`  | Fail-fast triggered or unrecoverable CLI error. |
-| `2`  | Partial run: some files failed, artifact emitted. |
+| Code | Meaning                                                                 |
+| ---- | ----------------------------------------------------------------------- |
+| `0`  | All files parsed successfully.                                          |
+| `1`  | `--fail-fast` triggered: first parse error caused an early abort.       |
+| `2`  | Partial run: one or more files failed, artifact still emitted.          |
+| `3`  | Invalid repository path (not found, not a directory, permission denied).|
+
+> Without `--fail-fast` (the default), the tool always exits `0` or `2` — never `1` — even if files failed to parse.
 
 ---
 
 ## `.repogptignore`
 
-Use the same glob syntax as `.gitignore` to exclude paths or files **in addition** to built-ins such as `.git/`, `node_modules/`, `__pycache__/`, etc.
+Use the same glob syntax as `.gitignore` to exclude paths or files **in addition** to the built-in defaults.
+
+**Built-in ignores** (always excluded, non-configurable):
+
+`.git` · `.hg` · `.svn` · `__pycache__` · `.venv` · `venv` · `env` · `.mypy_cache` · `.pytest_cache` · `dist` · `build` · `node_modules` · `.tox` · `.DS_Store` · `.idea` · `.vscode`
+
+> Note: hidden files and directories (dotfiles) are **not** excluded by default unless they appear in the list above. Use `.repogptignore` to exclude them.
+> Files larger than **2 MB** are always skipped regardless of ignore rules.
 
 ```gitignore
 # ignore generated docs
