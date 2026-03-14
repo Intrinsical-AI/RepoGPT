@@ -19,7 +19,5 @@ class PipelinePort(Protocol):
 
 
 class PublisherPort(Protocol):
-    def publish(
-        self, results: list[PipelineResult], conf: AnalysisConf
-    ) -> None:  # noqa: D401
+    def publish(self, results: list[PipelineResult], conf: AnalysisConf) -> None:  # noqa: D401
         ...

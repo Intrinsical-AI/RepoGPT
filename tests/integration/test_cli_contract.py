@@ -20,9 +20,7 @@ def _run(args: list[str], repo_path: Path = DATA_ROOT) -> subprocess.CompletedPr
     env = dict(os.environ)
     existing_pythonpath = env.get("PYTHONPATH")
     env["PYTHONPATH"] = (
-        f"{SRC_ROOT}{os.pathsep}{existing_pythonpath}"
-        if existing_pythonpath
-        else str(SRC_ROOT)
+        f"{SRC_ROOT}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(SRC_ROOT)
     )
     return subprocess.run(
         [sys.executable, "-m", "repogpt.app.cli", *args, str(repo_path)],
@@ -178,9 +176,9 @@ def test_cli_ndjson_matches_golden_fixture() -> None:
     records = _normalize_ndjson(_json_lines(proc.stdout), CLI_FIXTURE)
     expected = [
         json.loads(line)
-        for line in (
-            GOLDEN_ROOT / "cli_fixture_ndjson.ndjson"
-        ).read_text(encoding="utf-8").splitlines()
+        for line in (GOLDEN_ROOT / "cli_fixture_ndjson.ndjson")
+        .read_text(encoding="utf-8")
+        .splitlines()
         if line.strip()
     ]
     assert records == expected

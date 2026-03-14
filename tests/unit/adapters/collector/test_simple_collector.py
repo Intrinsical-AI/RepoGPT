@@ -124,9 +124,7 @@ def test_collect_with_empty_languages_returns_no_files(tmp_path: Path) -> None:
     (tmp_path / "b.md").write_text("# hi\n", encoding="utf-8")
 
     collector = SimpleCollector()
-    result = collector.collect(
-        AnalysisConf(repo_path=tmp_path, include_tests=True, languages=[])
-    )
+    result = collector.collect(AnalysisConf(repo_path=tmp_path, include_tests=True, languages=[]))
 
     assert result.files == []
     assert sorted(path.name for path in result.skipped) == ["a.py", "b.md"]

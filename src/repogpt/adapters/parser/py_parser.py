@@ -299,9 +299,7 @@ class PythonParser(ParserInterface):
             elif param["kind"] == "kwarg":
                 rendered = f"**{rendered}"
             elif (
-                param["kind"] == "keyword_only"
-                and not saw_vararg
-                and not inserted_kwonly_separator
+                param["kind"] == "keyword_only" and not saw_vararg and not inserted_kwonly_separator
             ):
                 params.append("*")
                 inserted_kwonly_separator = True

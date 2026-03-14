@@ -172,12 +172,12 @@ def test_publish_code_units_json(tmp_path: Path) -> None:
     )
     assert payload["documents"][1]["path"] == "sample.py"
     assert payload["documents"][1]["content"] == (
-        "    def method(self, value: int) -> int:\n"
-        "        return value + 1\n"
+        "    def method(self, value: int) -> int:\n        return value + 1\n"
     )
-    assert payload["documents"][1]["content_hash"] == hashlib.sha256(
-        payload["documents"][1]["content"].encode("utf-8")
-    ).hexdigest()
+    assert (
+        payload["documents"][1]["content_hash"]
+        == hashlib.sha256(payload["documents"][1]["content"].encode("utf-8")).hexdigest()
+    )
     assert payload["documents"][1]["source_id"] == f"repogpt:{tmp_path.name.lower()}:file:sample.py"
     assert set(payload["documents"][1]["metadata"].keys()) == {
         "file",
@@ -259,8 +259,7 @@ def test_publish_code_units_uses_pipeline_content_snapshot(tmp_path: Path) -> No
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["documents"][0]["symbol"] == "helper"
     assert payload["documents"][0]["content"] == (
-        "def helper(name: str = 'world') -> str:\n"
-        "    return name\n"
+        "def helper(name: str = 'world') -> str:\n    return name\n"
     )
 
 

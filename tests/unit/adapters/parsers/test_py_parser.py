@@ -95,8 +95,7 @@ def test_python_signature_with_vararg_and_keyword_only_is_valid(tmp_path: Path) 
     parser = PythonParser()
     fixture = tmp_path / "tmp_signature.py"
     fixture.write_text(
-        "def foo(*args, kw: int, **kwargs) -> None:\n"
-        "    return None\n",
+        "def foo(*args, kw: int, **kwargs) -> None:\n    return None\n",
         encoding="utf-8",
     )
     root = parser.parse(

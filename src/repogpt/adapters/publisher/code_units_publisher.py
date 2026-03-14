@@ -287,13 +287,9 @@ class CodeUnitsPublisher(PublisherPort):
                     segment_base = _markdown_segment(child.name)
                     heading_slug_counts[segment_base] = heading_slug_counts.get(segment_base, 0) + 1
                     ordinal = heading_slug_counts[segment_base]
-                    segment = (
-                        segment_base if ordinal == 1 else f"{segment_base}-{ordinal}"
-                    )
+                    segment = segment_base if ordinal == 1 else f"{segment_base}-{ordinal}"
                     next_heading_path = (
-                        f"{current_heading_path}/{segment}"
-                        if current_heading_path
-                        else segment
+                        f"{current_heading_path}/{segment}" if current_heading_path else segment
                     )
                     if child.id in selected_ids:
                         external_ids[child.id] = (

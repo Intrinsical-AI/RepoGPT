@@ -66,9 +66,7 @@ def test_markdown_ids_are_deterministic() -> None:
 def test_markdown_unclosed_code_block_extends_to_eof(tmp_path: Path) -> None:
     fixture = tmp_path / "unclosed.md"
     fixture.write_text(
-        "# Demo\n"
-        "```python\n"
-        "print('ok')\n",
+        "# Demo\n```python\nprint('ok')\n",
         encoding="utf-8",
     )
 
@@ -90,11 +88,7 @@ def test_markdown_unclosed_code_block_extends_to_eof(tmp_path: Path) -> None:
 def test_markdown_skips_headings_and_links_inside_code_fences(tmp_path: Path) -> None:
     fixture = tmp_path / "fenced.md"
     fixture.write_text(
-        "# Demo\n"
-        "```python\n"
-        "# Not a heading\n"
-        "[click](https://example.com)\n"
-        "```\n",
+        "# Demo\n```python\n# Not a heading\n[click](https://example.com)\n```\n",
         encoding="utf-8",
     )
 

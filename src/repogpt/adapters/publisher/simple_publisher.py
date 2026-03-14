@@ -76,9 +76,7 @@ class SimplePublisher(PublisherPort):
 
     def publish(self, results: list[PipelineResult], conf: AnalysisConf) -> None:  # noqa: D401
         node_records = [
-            node
-            for result in results
-            for node in self._yield_node_records(result, conf)
+            node for result in results for node in self._yield_node_records(result, conf)
         ]
         failure_records = [
             self._failure_record(result) for result in results if result.root is None

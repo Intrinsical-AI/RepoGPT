@@ -68,9 +68,7 @@ def main() -> int:  # noqa: D401
             )
     if args.emit == "code-units" and args.format != "json":
         parser.error("--emit code-units only supports --format json")
-    to_stdout = args.stdout or (
-        args.output and Path(args.output).as_posix() == "/dev/stdout"
-    )
+    to_stdout = args.stdout or (args.output and Path(args.output).as_posix() == "/dev/stdout")
 
     conf = AnalysisConf(
         repo_path=Path(args.repo_path).resolve(),
