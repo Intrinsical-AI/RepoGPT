@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 
 @dataclass
@@ -15,7 +15,7 @@ class AnalysisConf:
     flatten_kind: str = "node"
     output_format: str = "json"
     to_stdout: bool = False
-    emit_kind: str = "ast"
+    emit_kind: Literal["ast", "code-units"] = "ast"
     # --- phase‑3 ---
     log_level: str = "INFO"  # DEBUG | INFO
     fail_fast: bool = False  # abort on first parser error

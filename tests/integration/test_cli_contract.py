@@ -196,22 +196,22 @@ def test_cli_empty_repo_returns_zero_and_no_index_error() -> None:
         assert payload["records"] == []
 
 
-def test_cli_missing_repo_path_returns_clean_exit_code_2() -> None:
+def test_cli_missing_repo_path_returns_clean_exit_code_3() -> None:
     missing = REPO_ROOT / "does-not-exist"
     proc = _run(["--stdout", "--format", "json"], missing)
 
-    assert proc.returncode == 2
+    assert proc.returncode == 3
     assert "invalid repository path" in proc.stderr
     assert "Traceback" not in proc.stderr
 
 
-def test_cli_file_repo_path_returns_clean_exit_code_2() -> None:
+def test_cli_file_repo_path_returns_clean_exit_code_3() -> None:
     with TemporaryDirectory() as tmp_dir:
         repo_file = Path(tmp_dir) / "repo.py"
         repo_file.write_text("x=1", encoding="utf-8")
 
         proc = _run(["--stdout", "--format", "json"], repo_file)
 
-    assert proc.returncode == 2
+    assert proc.returncode == 3
     assert "invalid repository path" in proc.stderr
     assert "Traceback" not in proc.stderr

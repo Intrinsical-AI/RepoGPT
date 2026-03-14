@@ -95,7 +95,7 @@ def main() -> int:  # noqa: D401
         ).run(runtime_conf=conf)
     except (FileNotFoundError, NotADirectoryError, PermissionError) as exc:
         log.error("invalid repository path", error=str(exc))
-        return 2
+        return 3
 
 
 if __name__ == "__main__":
