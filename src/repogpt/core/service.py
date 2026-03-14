@@ -9,7 +9,9 @@ from repogpt.models import AnalysisConf
 
 
 class CodeRepoAnalysisService:
-    def __init__(self, collector: CollectorPort, pipeline: PipelinePort, publisher: PublisherPort):
+    def __init__(
+        self, collector: CollectorPort, pipeline: PipelinePort, publisher: PublisherPort
+    ):
         self.collector = collector
         self.pipeline = pipeline
         self.publisher = publisher

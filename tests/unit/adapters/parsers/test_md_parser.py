@@ -6,7 +6,6 @@ from repogpt.adapters.parser.md_parser import MarkdownParser
 from repogpt.models import CodeNode, ParserInput
 from repogpt.utils.tree_utils import flatten_tree
 
-
 DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 
 

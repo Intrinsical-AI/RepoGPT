@@ -59,7 +59,9 @@ class MarkdownParser(ParserInterface):
             content = path.read_text(encoding="utf-8", errors="replace")
         lines = content.splitlines()
         total_lines = max(len(lines), 1)
-        relative_path = str(parser_input.file_info.get("relative_path") or path.as_posix())
+        relative_path = str(
+            parser_input.file_info.get("relative_path") or path.as_posix()
+        )
 
         heading_count = 0
         code_block_count = 0
@@ -168,8 +170,13 @@ class MarkdownParser(ParserInterface):
                     start_line=line_number,
                     end_line=line_number,
                     parent_id=parent.id,
-                    attributes={"text": link_match.group(1), "url": link_match.group(2)},
-                    dependencies=[{"text": link_match.group(1), "url": link_match.group(2)}],
+                    attributes={
+                        "text": link_match.group(1),
+                        "url": link_match.group(2),
+                    },
+                    dependencies=[
+                        {"text": link_match.group(1), "url": link_match.group(2)}
+                    ],
                 )
                 parent.children.append(link_node)
                 link_count += 1

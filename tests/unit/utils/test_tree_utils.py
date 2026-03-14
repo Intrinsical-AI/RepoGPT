@@ -5,7 +5,9 @@ from repogpt.utils.tree_utils import flatten_tree, iter_nodes
 
 
 def _deep_tree(depth: int) -> CodeNode:
-    root = CodeNode(id="root", type="module", name="root", language="py", path="root.py")
+    root = CodeNode(
+        id="root", type="module", name="root", language="py", path="root.py"
+    )
     current = root
     for index in range(depth):
         child = CodeNode(

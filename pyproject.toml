@@ -69,8 +69,8 @@ where = ["src"]
 line-length = 88
 exclude = '''
 (
-    ^tests/data/bad\.py$
-    | ^tests/data/        # todos los data fakes si quieres
+    tests/data/
+  | tests/fixtures/
 )
 '''
 

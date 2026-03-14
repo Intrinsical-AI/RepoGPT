@@ -36,7 +36,9 @@ def calculate_file_hash(file_path: Path, algorithm: str = "sha256") -> str | Non
     except ValueError:
         logger.error("invalid hash algorithm", algorithm=algorithm)
     except Exception as e:
-        logger.exception("unexpected error while hashing", path=str(file_path), error=str(e))
+        logger.exception(
+            "unexpected error while hashing", path=str(file_path), error=str(e)
+        )
 
     return None
 
@@ -70,10 +72,14 @@ def is_likely_binary(file_path: Path, check_bytes: int = 1024) -> bool:
         logger.warning("permission denied while checking binary", path=str(file_path))
         return False  # Asumir no binario
     except OSError as e:
-        logger.warning("os error while checking binary", path=str(file_path), error=str(e))
+        logger.warning(
+            "os error while checking binary", path=str(file_path), error=str(e)
+        )
         return False  # Asumir no binario
     except Exception as e:
-        logger.warning("unexpected error while checking binary", path=str(file_path), error=str(e))
+        logger.warning(
+            "unexpected error while checking binary", path=str(file_path), error=str(e)
+        )
         return False  # Asumir no binario
 
     logger.debug("file does not look binary", path=str(file_path))
