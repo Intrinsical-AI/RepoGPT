@@ -96,6 +96,9 @@ def main() -> int:  # noqa: D401
     except (FileNotFoundError, NotADirectoryError, PermissionError) as exc:
         log.error("invalid repository path", error=str(exc))
         return 3
+    except Exception as exc:
+        log.error("unexpected error", error=str(exc))
+        return 3
 
 
 if __name__ == "__main__":

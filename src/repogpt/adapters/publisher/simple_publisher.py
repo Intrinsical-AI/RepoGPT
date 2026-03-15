@@ -99,27 +99,31 @@ class SimplePublisher(PublisherPort):
             )
         else:
             output_path = conf.output or Path.cwd() / "analysis.json"
-            with output_path.open("w", encoding="utf-8") as handle:
-                if conf.output_format == "json":
-                    json.dump(
-                        {
-                            "schema_version": SCHEMA_VERSION,
-                            "repo_root": conf.repo_path.resolve().as_posix(),
-                            "stats": summary["stats"],
-                            "failures": failure_records,
-                            "records": node_records,
-                        },
-                        handle,
-                        ensure_ascii=False,
-                        indent=2,
-                    )
-                else:
-                    for record in self._iter_ndjson_records(
-                        node_records=node_records,
-                        failure_records=failure_records,
-                        summary=summary,
-                    ):
-                        handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            try:
+                with output_path.open("w", encoding="utf-8") as handle:
+                    if conf.output_format == "json":
+                        json.dump(
+                            {
+                                "schema_version": SCHEMA_VERSION,
+                                "repo_root": conf.repo_path.resolve().as_posix(),
+                                "stats": summary["stats"],
+                                "failures": failure_records,
+                                "records": node_records,
+                            },
+                            handle,
+                            ensure_ascii=False,
+                            indent=2,
+                        )
+                    else:
+                        for record in self._iter_ndjson_records(
+                            node_records=node_records,
+                            failure_records=failure_records,
+                            summary=summary,
+                        ):
+                            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            except OSError as exc:
+                logger.error("failed to write output", path=str(output_path), error=str(exc))
+                raise
             logger.info(
                 "analysis saved",
                 path=str(output_path),

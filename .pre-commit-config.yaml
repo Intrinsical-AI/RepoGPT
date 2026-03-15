@@ -8,6 +8,8 @@ repos:
   - repo: https://github.com/charliermarsh/ruff-pre-commit
     rev: v0.4.4
     hooks:
+      - id: ruff-format
+        exclude: 'tests/(data|fixtures)/'
       - id: ruff
         exclude: 'tests/(data|fixtures)/'
 

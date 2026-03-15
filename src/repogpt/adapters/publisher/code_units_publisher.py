@@ -128,10 +128,14 @@ class CodeUnitsPublisher(PublisherPort):
             sys.stdout.write("\n")
         else:
             output_path = conf.output or Path.cwd() / "code_units.json"
-            output_path.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
+            try:
+                output_path.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+            except OSError as exc:
+                logger.error("failed to write output", path=str(output_path), error=str(exc))
+                raise
             logger.info(
                 "code units saved",
                 path=str(output_path),

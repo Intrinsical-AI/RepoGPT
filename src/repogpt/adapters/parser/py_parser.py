@@ -4,9 +4,13 @@ import ast
 from collections.abc import Sequence
 from typing import Any
 
+import structlog
+
 from repogpt.models import CodeNode, ParserInput, ParserInterface
 from repogpt.utils.node_utils import stable_node_id
 from repogpt.utils.text_processing import count_blank_lines, extract_comments
+
+logger = structlog.get_logger(__name__)
 
 
 class PythonParser(ParserInterface):
@@ -321,7 +325,12 @@ class PythonParser(ParserInterface):
             return None
         try:
             return ast.unparse(expr)
-        except Exception:
+        except Exception as exc:
+            logger.debug(
+                "ast.unparse failed, annotation dropped",
+                node_type=type(expr).__name__,
+                error=str(exc),
+            )
             return None
 
     def _visibility(self, name: str) -> str:
