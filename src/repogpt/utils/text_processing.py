@@ -1,5 +1,6 @@
 # repogpt/utils/text_processing.py
 
+import bisect
 import io
 import re
 import tokenize
@@ -39,9 +40,11 @@ def extract_comments(content: str, language: str = "python") -> list[dict[str, A
                 error=str(exc),
             )
     elif language == "markdown":
-        # Busca <!-- ... --> comentarios HTML
+        # Busca <!-- ... --> comentarios HTML.
+        # Pre-computa posiciones de \n una sola vez: O(N) en lugar de O(N×M).
+        newline_offsets = [i for i, ch in enumerate(content) if ch == "\n"]
         for match in re.finditer(r"<!--(.*?)-->", content, re.DOTALL):
-            line = content.count("\n", 0, match.start()) + 1
+            line = bisect.bisect_left(newline_offsets, match.start()) + 1
             comments.append(
                 {
                     "text": match.group(1).strip(),

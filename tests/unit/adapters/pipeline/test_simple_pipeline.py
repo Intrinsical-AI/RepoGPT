@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 import uuid
 
@@ -123,6 +124,26 @@ def test_process_no_processors(tmp_path: Path) -> None:
     assert result.root is not None
     assert result.root.name == "test"
     assert result.error is None
+
+
+# ── EDGE-4: lectura única en binario ─────────────────────────────────────────
+
+
+def test_process_file_info_size_and_hash_are_byte_accurate(tmp_path: Path) -> None:
+    # Contenido con caracteres multibyte: len(bytes) ≠ len(str).
+    # Verifica que size es la longitud en bytes y sha256 es el hash del contenido raw.
+    contenido = "# café ☕\nprint('héllo')\n"
+    raw = contenido.encode("utf-8")
+    fp = tmp_path / "unicode.py"
+    fp.write_bytes(raw)
+
+    pipeline = SimplePipeline(parsers={"py": MockParser()}, processors={})
+    result = pipeline.process(fp, AnalysisConf(repo_path=tmp_path))
+
+    assert result.file_info["size"] == len(raw)
+    assert result.file_info["size"] != len(contenido)  # bytes > chars por los multibyte
+    assert result.file_info["sha256"] == hashlib.sha256(raw).hexdigest()
+    assert result.content == contenido
 
 
 def test_process_only_applies_processor_for_matching_extension(tmp_path: Path) -> None:

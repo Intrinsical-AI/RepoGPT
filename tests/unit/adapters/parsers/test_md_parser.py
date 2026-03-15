@@ -100,3 +100,66 @@ def test_markdown_skips_headings_and_links_inside_code_fences(tmp_path: Path) ->
     assert [node["type"] for node in nodes].count("link") == 0
     assert root.metrics["heading_count"] == 1
     assert root.metrics["link_count"] == 0
+
+
+# ── EDGE-1: vallas de tilde ───────────────────────────────────────────────────
+
+
+def test_markdown_tilde_fence_is_recognized_as_code_block(tmp_path: Path) -> None:
+    fixture = tmp_path / "tilde.md"
+    fixture.write_text(
+        "# Demo\n~~~python\nprint(1)\n~~~\n",
+        encoding="utf-8",
+    )
+
+    root = MarkdownParser().parse(
+        ParserInput(file_path=fixture, file_info={"relative_path": "tilde.md"})
+    )
+    nodes = flatten_tree(root)
+
+    code_blocks = [n for n in nodes if n["type"] == "code_block"]
+    assert len(code_blocks) == 1
+    assert code_blocks[0]["attributes"]["fence_language"] == "python"
+    assert code_blocks[0]["start_line"] == 2
+    assert code_blocks[0]["end_line"] == 4
+
+
+def test_markdown_tilde_fence_not_closed_by_backtick_fence(tmp_path: Path) -> None:
+    # Un bloque abierto con ~~~ no debe cerrarse con ```.
+    # La línea ``` queda dentro del bloque y el bloque se marca como unclosed.
+    fixture = tmp_path / "mixed.md"
+    fixture.write_text(
+        "~~~python\nprint(1)\n```\nprint(2)\n",
+        encoding="utf-8",
+    )
+
+    root = MarkdownParser().parse(
+        ParserInput(file_path=fixture, file_info={"relative_path": "mixed.md"})
+    )
+    nodes = flatten_tree(root)
+
+    code_blocks = [n for n in nodes if n["type"] == "code_block"]
+    assert len(code_blocks) == 1
+    assert code_blocks[0]["attributes"].get("is_unclosed") is True
+    assert code_blocks[0]["end_line"] == 4  # se extiende hasta el EOF
+
+
+# ── EDGE-2: info strings con espacio ─────────────────────────────────────────
+
+
+def test_markdown_fence_info_string_with_space_uses_first_token(tmp_path: Path) -> None:
+    # ```python {.class} → fence_language debe ser "python", no None ni la cadena completa.
+    fixture = tmp_path / "info.md"
+    fixture.write_text(
+        "```python {.class}\ncode here\n```\n",
+        encoding="utf-8",
+    )
+
+    root = MarkdownParser().parse(
+        ParserInput(file_path=fixture, file_info={"relative_path": "info.md"})
+    )
+    nodes = flatten_tree(root)
+
+    code_blocks = [n for n in nodes if n["type"] == "code_block"]
+    assert len(code_blocks) == 1
+    assert code_blocks[0]["attributes"]["fence_language"] == "python"

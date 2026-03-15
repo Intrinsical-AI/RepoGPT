@@ -88,14 +88,20 @@ class SimpleCollector(CollectorPort):
                 continue
             # Excluye tests si así lo pide la conf
             if not conf.include_tests:
-                filename = p.parts[-1]
-                if "tests" in p.parts or filename.startswith(("test_", "test-")):
+                rel_parts = p.relative_to(repo_root).parts
+                if "tests" in rel_parts or p.name.startswith(("test_", "test-")):
                     slogger.debug("skip", path=str(p), reason="tests_excluded")
                     skipped.append(p)
                     continue
 
             # Filtrar por tamaño y binarios
-            if p.stat().st_size > conf.max_file_size:
+            try:
+                file_size = p.stat().st_size
+            except OSError:
+                slogger.warning("stat failed, skipping", path=str(p))
+                skipped.append(p)
+                continue
+            if file_size > conf.max_file_size:
                 slogger.debug("skip", path=str(p), reason="file_too_large")
                 skipped.append(p)
                 continue

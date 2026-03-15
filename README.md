@@ -7,17 +7,18 @@ structured, queryable and ready for downstream indexing or RAG pipelines.
 
 ```
 
-\[Collector] → \[Parser] → \[Processor] → \[Publisher]
-\|            |              |             |
+[Collector] → [Parser] → [Processor] → [Publisher]
+   |            |              |             |
 paths      CodeNode-trees  optional     JSON / NDJSON / stdout
 
 ```
 
-* **Languages** – Python (`.py`) & Markdown (`.md`) only in v1.  
-* **Outputs** – hierarchical or flat, envelope `JSON` or streaming `NDJSON`.  
-* **Logging** – powered by `structlog`; fully STDOUT-safe.  
+* **Languages** – Python (`.py`) & Markdown (`.md`) only in v1.
+* **Outputs** – hierarchical or flat, envelope `JSON` or streaming `NDJSON`.
+* **Logging** – powered by `structlog`; fully STDOUT-safe.
 * **Fail-fast** – abort immediately on the first parser error if you need strict runs.
 * **Ignore rules** – `.repogptignore` (git-wildmatch) + sensible defaults (`.git`, `node_modules`, …).
+* **Markdown fences** – both backtick (`` ``` ``) and tilde (`~~~`) delimiters; multi-word info strings (```` ```python console ````) use the first token as the language.
 
 ---
 
@@ -278,9 +279,10 @@ pytest -q
 
 The suite exercises:
 
-* Collect / ignore rules
-* Markdown & Python parsers
+* Collect / ignore rules (including relative-path test detection and race-condition file disappearance)
+* Markdown & Python parsers (tilde fences, multi-word info strings, deep-tree recursion safety)
 * JSON/NDJSON contract v1
+* Code-units publisher (qualified symbol IDs, orphaned-node edge cases, byte-accurate file hashing)
 * CLI exit codes and partial failures
 * Import-path isolation to ensure tests run against this checkout
 

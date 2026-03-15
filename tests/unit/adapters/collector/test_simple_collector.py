@@ -1,4 +1,6 @@
+import os
 from pathlib import Path
+from unittest.mock import patch
 import pytest
 
 from repogpt.adapters.collector.simple_collector import (
@@ -149,3 +151,56 @@ def test_ignore_reason_reports_why_a_path_is_skipped(tmp_path: Path) -> None:
 
     assert ignore_reason(ignored_file, tmp_path) == "default_ignore"
     assert should_ignore(ignored_file, tmp_path) is True
+
+
+def test_collect_excludes_tests_uses_relative_path(tmp_path: Path) -> None:
+    # Repo que vive dentro de un directorio llamado "tests" en el sistema de ficheros.
+    # Los archivos internos que NO son de tests deben incluirse igualmente.
+    repo_root = tmp_path / "tests" / "myproject"
+    repo_root.mkdir(parents=True)
+    (repo_root / "src.py").write_text("x=1", encoding="utf-8")
+    (repo_root / "test_src.py").write_text("x=2", encoding="utf-8")
+    inner_tests = repo_root / "tests"
+    inner_tests.mkdir()
+    (inner_tests / "conftest.py").write_text("x=3", encoding="utf-8")
+
+    collector = SimpleCollector()
+    conf = AnalysisConf(repo_path=repo_root, include_tests=False)
+    result = collector.collect(conf)
+
+    names = {f.name for f in result.files}
+    # src.py incluido; test_src.py y tests/conftest.py excluidos
+    assert names == {"src.py"}
+    skipped_names = {f.name for f in result.skipped}
+    assert "test_src.py" in skipped_names
+    assert "conftest.py" in skipped_names
+
+
+def test_collect_skips_file_that_disappears_during_stat(tmp_path: Path) -> None:
+    # Si p.stat() lanza OSError (race condition: archivo borrado entre rglob y stat),
+    # el colector debe continuar sin propagar la excepción.
+    (tmp_path / "stable.py").write_text("x=1", encoding="utf-8")
+    vanishing = tmp_path / "vanishing.py"
+    vanishing.write_text("x=2", encoding="utf-8")
+
+    original_stat = Path.stat
+    # Cuenta las llamadas stat(follow_symlinks=True) para vanishing.py.
+    # La primera la hace is_file() y debe pasar; la segunda la hace
+    # nuestro p.stat().st_size explícito y debe fallar.
+    call_counts: dict[str, int] = {}
+
+    def flaky_stat(self: Path, *, follow_symlinks: bool = True) -> os.stat_result:
+        if self.name == "vanishing.py" and follow_symlinks:
+            call_counts[str(self)] = call_counts.get(str(self), 0) + 1
+            if call_counts[str(self)] >= 2:
+                raise OSError("file vanished")
+        return original_stat(self, follow_symlinks=follow_symlinks)
+
+    collector = SimpleCollector()
+    conf = AnalysisConf(repo_path=tmp_path)
+    with patch.object(Path, "stat", flaky_stat):
+        result = collector.collect(conf)
+
+    assert len(result.files) == 1
+    assert result.files[0].name == "stable.py"
+    assert any(p.name == "vanishing.py" for p in result.skipped)

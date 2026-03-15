@@ -31,6 +31,10 @@ def flatten_tree(root: CodeNode) -> list[dict[str, Any]]:
 
 
 def iter_nodes(root: CodeNode) -> list[CodeNode]:
+    """Return all nodes in DFS pre-order (root first, then children left-to-right).
+
+    Uses an explicit stack to avoid recursion limits on deep trees.
+    """
     nodes: list[CodeNode] = []
     stack = [root]
     while stack:

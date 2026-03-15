@@ -125,3 +125,84 @@ def test_python_module_end_line_handles_trailing_newline(tmp_path: Path) -> None
     )
 
     assert root.end_line == 2
+
+
+# ── COMP-2: _associate_comments iterativo ────────────────────────────────────
+
+
+def test_associate_comments_does_not_raise_on_deep_tree() -> None:
+    # Árbol 1500 niveles de profundidad: la versión recursiva original lanzaría
+    # RecursionError; la iterativa debe completarse sin error.
+    parser = PythonParser()
+    depth = 1500
+    root = CodeNode(
+        id="root",
+        type="module",
+        name="root",
+        language="py",
+        path="root.py",
+        start_line=1,
+        end_line=depth,
+    )
+    current = root
+    for i in range(1, depth):
+        child = CodeNode(
+            id=f"node-{i}",
+            type="function",
+            name=f"f{i}",
+            language="py",
+            path="root.py",
+            start_line=i,
+            end_line=i,
+            parent_id=current.id,
+        )
+        current.children.append(child)
+        current = child
+
+    comment = {"text": "deep comment", "line": depth // 2}
+    parser._associate_comments(root, [comment])  # no debe lanzar RecursionError
+
+    all_c = all_comments(root)
+    assert any(c["text"] == "deep comment" for c in all_c)
+
+
+def test_associate_comments_attaches_to_deepest_containing_node() -> None:
+    # Verifica la semántica: el comentario va al nodo más específico que lo contiene.
+    parser = PythonParser()
+    inner = CodeNode(
+        id="inner",
+        type="function",
+        name="inner",
+        language="py",
+        path="f.py",
+        start_line=3,
+        end_line=5,
+    )
+    outer = CodeNode(
+        id="outer",
+        type="class",
+        name="Outer",
+        language="py",
+        path="f.py",
+        start_line=1,
+        end_line=10,
+        children=[inner],
+    )
+    root = CodeNode(
+        id="root",
+        type="module",
+        name="root",
+        language="py",
+        path="f.py",
+        start_line=1,
+        end_line=10,
+        children=[outer],
+    )
+
+    parser._associate_comments(root, [{"text": "inside inner", "line": 4}])
+    parser._associate_comments(root, [{"text": "inside outer only", "line": 2}])
+    parser._associate_comments(root, [{"text": "outside all", "line": 11}])
+
+    assert inner.comments == [{"text": "inside inner", "line": 4}]
+    assert outer.comments == [{"text": "inside outer only", "line": 2}]
+    assert root.comments == [{"text": "outside all", "line": 11}]
