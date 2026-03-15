@@ -1,4 +1,5 @@
 import time
+from collections.abc import Callable
 from typing import Any
 from repogpt.models import CodeNode
 from repogpt.utils.tree_utils import (
@@ -8,8 +9,8 @@ from repogpt.utils.tree_utils import (
     all_tags,
     nodes_where,
     iter_nodes,
-    flatten_tree
 )
+
 
 def build_tree(depth: int, width: int, id_prefix: str = "node") -> CodeNode:
     node = CodeNode(
@@ -18,7 +19,7 @@ def build_tree(depth: int, width: int, id_prefix: str = "node") -> CodeNode:
         name=f"func_{id_prefix}",
         docstring=f"Docstring for {id_prefix}" if depth % 2 == 0 else None,
         comments=[{"text": "A comment", "line": 1}] if depth % 3 == 0 else [],
-        tags=["tag1", "tag2"] if depth % 4 == 0 else []
+        tags=["tag1", "tag2"] if depth % 4 == 0 else [],
     )
     if depth > 0:
         for i in range(width):
@@ -27,12 +28,14 @@ def build_tree(depth: int, width: int, id_prefix: str = "node") -> CodeNode:
             node.children.append(child)
     return node
 
-def benchmark_function(func, *args, iterations=10):
+
+def benchmark_function(func: Callable[..., Any], *args: Any, iterations: int = 10) -> float:
     start_time = time.perf_counter()
     for _ in range(iterations):
         func(*args)
     end_time = time.perf_counter()
     return (end_time - start_time) / iterations
+
 
 if __name__ == "__main__":
     print("Building tree...")
@@ -54,5 +57,5 @@ if __name__ == "__main__":
     t_all_tags = benchmark_function(all_tags, root)
     print(f"all_tags: {t_all_tags:.6f} seconds")
 
-    t_nodes_where = benchmark_function(nodes_where, root, lambda n: n.get("type") == "function")
+    t_nodes_where = benchmark_function(nodes_where, root, lambda n: n.type == "function")
     print(f"nodes_where: {t_nodes_where:.6f} seconds")
