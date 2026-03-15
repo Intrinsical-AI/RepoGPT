@@ -67,9 +67,13 @@ def test_publish_ndjson_contract(tmp_path: Path) -> None:
         flatten_kind="node",
     )
 
-    SimplePublisher().publish([_result(root=_node()), _result(root=None, path="bad.py")], conf)
+    SimplePublisher().publish(
+        [_result(root=_node()), _result(root=None, path="bad.py")], conf
+    )
 
-    records = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+    records = [
+        json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()
+    ]
     assert [record["record_type"] for record in records] == [
         "node",
         "failure",

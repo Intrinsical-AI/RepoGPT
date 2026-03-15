@@ -33,7 +33,9 @@ class SimplePublisher(PublisherPort):
                 "record_type": "node",
                 "schema_version": SCHEMA_VERSION,
                 **node,
-                "path": str(result.file_info.get("relative_path") or node.get("path") or ""),
+                "path": str(
+                    result.file_info.get("relative_path") or node.get("path") or ""
+                ),
                 "file": {
                     "size": result.file_info.get("size"),
                     "sha256": result.file_info.get("sha256"),
@@ -44,7 +46,9 @@ class SimplePublisher(PublisherPort):
         return {
             "record_type": "failure",
             "schema_version": SCHEMA_VERSION,
-            "path": str(result.file_info.get("relative_path") or result.path.as_posix()),
+            "path": str(
+                result.file_info.get("relative_path") or result.path.as_posix()
+            ),
             "language": result.language,
             "error": result.error,
             "file": {
@@ -74,9 +78,13 @@ class SimplePublisher(PublisherPort):
             },
         }
 
-    def publish(self, results: list[PipelineResult], conf: AnalysisConf) -> None:  # noqa: D401
+    def publish(
+        self, results: list[PipelineResult], conf: AnalysisConf
+    ) -> None:  # noqa: D401
         node_records = [
-            node for result in results for node in self._yield_node_records(result, conf)
+            node
+            for result in results
+            for node in self._yield_node_records(result, conf)
         ]
         failure_records = [
             self._failure_record(result) for result in results if result.root is None
