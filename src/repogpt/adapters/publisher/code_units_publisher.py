@@ -13,7 +13,7 @@ from repogpt.core.ports import PublisherPort
 from repogpt.models import AnalysisConf, CodeNode, PipelineResult
 from repogpt.utils.tree_utils import iter_nodes
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 KIND = "code-units"
 logger = structlog.get_logger(__name__)
 
@@ -59,17 +59,41 @@ def _markdown_segment(value: str | None) -> str:
     return _slugify(value or "section")
 
 
+def _queryable_metadata(
+    *,
+    repo_key: str,
+    path: str,
+    language: str | None,
+    unit_type: str,
+    symbol: str | None,
+    start_line: int | None,
+    end_line: int | None,
+    content_hash: str,
+) -> dict[str, Any]:
+    values = {
+        "repo_key": repo_key,
+        "path": path,
+        "language": language,
+        "unit_type": unit_type,
+        "symbol": symbol,
+        "start_line": start_line,
+        "end_line": end_line,
+        "content_hash": content_hash,
+    }
+    return {
+        key: value
+        for key, value in values.items()
+        if value is not None and (not isinstance(value, str) or value.strip())
+    }
+
+
 class CodeUnitsPublisher(PublisherPort):
-    def publish(
-        self, results: list[PipelineResult], conf: AnalysisConf
-    ) -> None:  # noqa: D401
+    def publish(self, results: list[PipelineResult], conf: AnalysisConf) -> None:  # noqa: D401
         repo_key = _slugify(conf.repo_path.name)
         scope = f"repogpt:{repo_key}"
         snapshot_id = self._snapshot_id(results=results, repo_key=repo_key)
         ok_results = [result for result in results if result.root is not None]
-        failures = [
-            self._failure_record(result) for result in results if result.root is None
-        ]
+        failures = [self._failure_record(result) for result in results if result.root is None]
         documents = [
             doc
             for result in ok_results
@@ -87,6 +111,7 @@ class CodeUnitsPublisher(PublisherPort):
             "repo_key": repo_key,
             "snapshot_id": snapshot_id,
             "scope": scope,
+            "replace_scope": True,
             "stats": {
                 "total_files": len(results),
                 "ok_files": len(ok_results),
@@ -120,9 +145,7 @@ class CodeUnitsPublisher(PublisherPort):
     def _snapshot_id(self, *, results: list[PipelineResult], repo_key: str) -> str:
         material = [
             {
-                "path": str(
-                    result.file_info.get("relative_path") or result.path.as_posix()
-                ),
+                "path": str(result.file_info.get("relative_path") or result.path.as_posix()),
                 "sha256": str(result.file_info.get("sha256") or ""),
             }
             for result in results
@@ -147,9 +170,7 @@ class CodeUnitsPublisher(PublisherPort):
         if not selected:
             return []
         file_sha = str(result.file_info.get("sha256") or "")
-        relative_path = str(
-            result.file_info.get("relative_path") or result.path.as_posix()
-        )
+        relative_path = str(result.file_info.get("relative_path") or result.path.as_posix())
         source_id = f"repogpt:{repo_key}:file:{relative_path}"
         content = result.content
         if content is None:
@@ -169,6 +190,7 @@ class CodeUnitsPublisher(PublisherPort):
                 start_line=node.start_line,
                 end_line=node.end_line,
             )
+            content_hash = _content_hash(span_content)
             docs.append(
                 {
                     "external_id": external_ids[node.id],
@@ -183,8 +205,18 @@ class CodeUnitsPublisher(PublisherPort):
                     "start_line": node.start_line,
                     "end_line": node.end_line,
                     "content": span_content,
-                    "content_hash": _content_hash(span_content),
+                    "content_hash": content_hash,
                     "metadata": {
+                        **_queryable_metadata(
+                            repo_key=repo_key,
+                            path=relative_path,
+                            language=node.language,
+                            unit_type=node.type,
+                            symbol=node.name,
+                            start_line=node.start_line,
+                            end_line=node.end_line,
+                            content_hash=content_hash,
+                        ),
                         "file": {
                             "sha256": file_sha,
                             "size": result.file_info.get("size"),
@@ -200,14 +232,10 @@ class CodeUnitsPublisher(PublisherPort):
     def _select_nodes(self, root: CodeNode) -> list[CodeNode]:
         nodes = iter_nodes(root)
         if root.language == "py":
-            selected = [
-                node for node in nodes if node.type in {"function", "method", "class"}
-            ]
+            selected = [node for node in nodes if node.type in {"function", "method", "class"}]
             return selected or [root]
         if root.language == "md":
-            selected = [
-                node for node in nodes if node.type in {"code_block", "heading"}
-            ]
+            selected = [node for node in nodes if node.type in {"code_block", "heading"}]
             return selected or [root]
         return [root]
 
@@ -269,9 +297,7 @@ class CodeUnitsPublisher(PublisherPort):
                     break
             if current.name and current.type in {"class", "function", "method"}:
                 symbol_parts.append(current.name)
-            qualified_symbol = _join_symbol_path(list(reversed(symbol_parts))) or (
-                node.name or ""
-            )
+            qualified_symbol = _join_symbol_path(list(reversed(symbol_parts))) or (node.name or "")
             external_ids[node.id] = (
                 f"repogpt:{repo_key}:{relative_path}:{node.type}:{qualified_symbol}"
             )
@@ -299,17 +325,11 @@ class CodeUnitsPublisher(PublisherPort):
                 next_heading_path = current_heading_path
                 if child.type == "heading":
                     segment_base = _markdown_segment(child.name)
-                    heading_slug_counts[segment_base] = (
-                        heading_slug_counts.get(segment_base, 0) + 1
-                    )
+                    heading_slug_counts[segment_base] = heading_slug_counts.get(segment_base, 0) + 1
                     ordinal = heading_slug_counts[segment_base]
-                    segment = (
-                        segment_base if ordinal == 1 else f"{segment_base}-{ordinal}"
-                    )
+                    segment = segment_base if ordinal == 1 else f"{segment_base}-{ordinal}"
                     next_heading_path = (
-                        f"{current_heading_path}/{segment}"
-                        if current_heading_path
-                        else segment
+                        f"{current_heading_path}/{segment}" if current_heading_path else segment
                     )
                     if child.id in selected_ids:
                         external_ids[child.id] = (
@@ -317,9 +337,7 @@ class CodeUnitsPublisher(PublisherPort):
                         )
                 elif child.type == "code_block":
                     section_path = current_heading_path or "root"
-                    code_block_ordinals[section_path] = (
-                        code_block_ordinals.get(section_path, 0) + 1
-                    )
+                    code_block_ordinals[section_path] = code_block_ordinals.get(section_path, 0) + 1
                     if child.id in selected_ids:
                         external_ids[child.id] = (
                             f"repogpt:{repo_key}:{relative_path}:code_block:"
@@ -339,9 +357,7 @@ class CodeUnitsPublisher(PublisherPort):
         return {
             "record_type": "failure",
             "schema_version": SCHEMA_VERSION,
-            "path": str(
-                result.file_info.get("relative_path") or result.path.as_posix()
-            ),
+            "path": str(result.file_info.get("relative_path") or result.path.as_posix()),
             "language": result.language,
             "error": result.error,
             "file": {

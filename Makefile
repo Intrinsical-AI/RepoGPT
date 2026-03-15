@@ -1,16 +1,10 @@
-.PHONY: test lint type cov
+.PHONY: test lint type clean repogpt
 
 lint:
 	ruff check .
 
 type:
 	mypy src tests
-
-# cov:
-# 	pytest --cov=src/repogpt --cov-report=html \
-# 	       --cov-report=xml:coverage.xml
-# 	@echo "Open htmlcov/index.html"
-
 
 test:
 	pytest -q

@@ -26,8 +26,19 @@ paths      CodeNode-trees  optional     JSON / NDJSON / stdout
 ```bash
 git clone https://github.com/MrCabss69/RepoGPT.git
 cd RepoGPT
+```
+
+**Recommended** (reproducible via `uv.lock`):
+
+```bash
+uv sync
+```
+
+**Alternative** (classic venv):
+
+```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"           # installs structlog, pathspec, pytest, ruff…
+pip install -e ".[dev]"
 ```
 
 ---
@@ -85,7 +96,7 @@ repogpt path-to-project/ --emit code-units --format json --stdout
 | `--stdout`                 | -               | Stream to STDOUT instead of file.<br>Passing `-o /dev/stdout` has the same effect.                                              |
 | `-o, --output PATH`        | `analysis.json` | Destination file (ignored if `--stdout`).                                                                                       |
 | `--languages "py,md"`      | all parsers     | Comma-separated, case-insensitive whitelist of supported languages.                                                             |
-| `--include-tests`          | *off*           | Do **not** skip `tests/` or `test_*.py`.                                                                                        |
+| `--include-tests`          | *off*           | Do **not** skip `tests/` directories, `test_*.py`, or `test-*.py` files.                                                       |
 | `--log-level {INFO,DEBUG}` | `INFO`          | Structured logs to STDERR.                                                                                                      |
 | `--fail-fast`              | *off*           | Abort on the first parser error (exit 1).                                                                                       |
 
@@ -93,17 +104,27 @@ repogpt path-to-project/ --emit code-units --format json --stdout
 
 ### Exit codes
 
-| Code | Meaning                                         |
-| ---- | ----------------------------------------------- |
-| `0`  | All requested files parsed successfully.        |
-| `1`  | Fail-fast triggered or unrecoverable CLI error. |
-| `2`  | Partial run: some files failed, artifact emitted. |
+| Code | Meaning                                                                 |
+| ---- | ----------------------------------------------------------------------- |
+| `0`  | All files parsed successfully.                                          |
+| `1`  | `--fail-fast` triggered: first parse error caused an early abort.       |
+| `2`  | Partial run: one or more files failed, artifact still emitted.          |
+| `3`  | Invalid repository path (not found, not a directory, permission denied).|
+
+> Without `--fail-fast` (the default), the tool always exits `0` or `2` — never `1` — even if files failed to parse.
 
 ---
 
 ## `.repogptignore`
 
-Use the same glob syntax as `.gitignore` to exclude paths or files **in addition** to built-ins such as `.git/`, `node_modules/`, `__pycache__/`, etc.
+Use the same glob syntax as `.gitignore` to exclude paths or files **in addition** to the built-in defaults.
+
+**Built-in ignores** (always excluded, non-configurable):
+
+`.git` · `.hg` · `.svn` · `__pycache__` · `.venv` · `venv` · `env` · `.mypy_cache` · `.pytest_cache` · `dist` · `build` · `node_modules` · `.tox` · `.DS_Store` · `.idea` · `.vscode`
+
+> Note: hidden files and directories (dotfiles) are **not** excluded by default unless they appear in the list above. Use `.repogptignore` to exclude them.
+> Files larger than **2 MB** are always skipped regardless of ignore rules.
 
 ```gitignore
 # ignore generated docs
@@ -142,11 +163,12 @@ docs/build/
 
 ```json
 {
-  "schema_version": "2",
+  "schema_version": "3",
   "kind": "code-units",
   "repo_key": "my-repo",
   "snapshot_id": "my-repo-4f1f0c9b8d1a2e3f",
   "scope": "repogpt:my-repo",
+  "replace_scope": true,
   "stats": { "total_files": 3, "ok_files": 2, "failed_files": 1, "emitted_documents": 4 },
   "failures": [{ "path": "bad.py", "language": "py", "error": "...", "file": { "sha256": "...", "size": 42 } }],
   "documents": [
@@ -165,6 +187,14 @@ docs/build/
       "content": "def helper():\n    return 1\n",
       "content_hash": "f9f4c6f5d2b8d7c89d8f6d1e8c5dbe4f6f8ed0bdb0d85c6d7d064c93f8b5f4c9",
       "metadata": {
+        "repo_key": "my-repo",
+        "path": "src/app.py",
+        "language": "py",
+        "unit_type": "function",
+        "symbol": "helper",
+        "start_line": 1,
+        "end_line": 2,
+        "content_hash": "f9f4c6f5d2b8d7c89d8f6d1e8c5dbe4f6f8ed0bdb0d85c6d7d064c93f8b5f4c9",
         "file": { "sha256": "...", "size": 42 },
         "tags": [],
         "attributes": {},
@@ -175,12 +205,13 @@ docs/build/
 }
 ```
 
-`--emit code-units` uses a dedicated public contract in schema `2`:
+`--emit code-units` uses a dedicated public contract in schema `3`:
 
 * `external_id` is semantic and stable per unit, not derived from the internal AST `node.id`.
 * `content_hash` is `sha256(content)` for the exact emitted span and is the per-document change signal.
 * `snapshot_id` remains a repo-snapshot marker based on file hashes; it is provenance, not a per-document delta key.
-* Canonical fields such as `path`, `language`, `unit_type`, `symbol`, `start_line` and `end_line` live at the top level of each document. `metadata` is auxiliary only.
+* `replace_scope: true` is emitted so canonical importers can do scope sync without extra wiring.
+* Canonical fields such as `path`, `language`, `unit_type`, `symbol`, `start_line` and `end_line` live at the top level of each document and are duplicated in `metadata` for generic downstream filtering/import flows.
 
 ---
 
@@ -205,11 +236,17 @@ Capture with `pytest`’s `caplog`, or redirect STDERR to a file in CI.
 
 ## Development
 
-```bash
-ruff check .
-mypy src tests
-pytest -q
-```
+Available `make` targets:
+
+| Target | Command | Description |
+|---|---|---|
+| `make lint` | `ruff check .` | Lint |
+| `make type` | `mypy src tests` | Type check |
+| `make test` | `pytest -q` | Run tests |
+| `make clean` | — | Remove `__pycache__`, `.pytest_cache`, `.pyc` |
+| `make repogpt` | `python -m repogpt.app.cli` | Run CLI directly |
+
+Or run the raw commands directly without `make`.
 
 ### Project layout
 
@@ -254,6 +291,13 @@ The suite exercises:
 * **Next** – richer Python semantics without breaking schema v1
 * **Later** – caching by file-hash + parallel workers
 * **Later** – new languages once they meet the same contract
+
+---
+
+## Design notes
+
+- [docs/IDEA.md](docs/IDEA.md) — schema contract rationale, frozen guarantees, immediate goals.
+- [docs/CHALLENGES.md](docs/CHALLENGES.md) — open design questions, roadmap trade-offs, known limitations.
 
 ---
 
