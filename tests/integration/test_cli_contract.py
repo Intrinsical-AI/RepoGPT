@@ -15,15 +15,11 @@ CLI_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "cli_repo"
 GOLDEN_ROOT = REPO_ROOT / "tests" / "golden"
 
 
-def _run(
-    args: list[str], repo_path: Path = DATA_ROOT
-) -> subprocess.CompletedProcess[str]:
+def _run(args: list[str], repo_path: Path = DATA_ROOT) -> subprocess.CompletedProcess[str]:
     env = dict(os.environ)
     existing_pythonpath = env.get("PYTHONPATH")
     env["PYTHONPATH"] = (
-        f"{SRC_ROOT}{os.pathsep}{existing_pythonpath}"
-        if existing_pythonpath
-        else str(SRC_ROOT)
+        f"{SRC_ROOT}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(SRC_ROOT)
     )
     return subprocess.run(
         [sys.executable, "-m", "repogpt.app.cli", *args, str(repo_path)],
@@ -38,9 +34,7 @@ def _json_lines(stdout: str) -> list[dict[str, object]]:
     return [json.loads(line) for line in stdout.splitlines() if line.strip()]
 
 
-def _normalize_json_payload(
-    payload: dict[str, object], repo_path: Path
-) -> dict[str, object]:
+def _normalize_json_payload(payload: dict[str, object], repo_path: Path) -> dict[str, object]:
     normalized = cast(dict[str, object], json.loads(json.dumps(payload)))
     normalized["repo_root"] = "<REPO_ROOT>"
     for failure in cast(list[dict[str, object]], normalized["failures"]):
@@ -51,9 +45,7 @@ def _normalize_json_payload(
     return normalized
 
 
-def _normalize_code_units_payload(
-    payload: dict[str, object], repo_path: Path
-) -> dict[str, object]:
+def _normalize_code_units_payload(payload: dict[str, object], repo_path: Path) -> dict[str, object]:
     normalized = cast(dict[str, object], json.loads(json.dumps(payload)))
     normalized["snapshot_id"] = "<SNAPSHOT_ID>"
     for document in cast(list[dict[str, object]], normalized["documents"]):
@@ -66,9 +58,7 @@ def _normalize_code_units_payload(
     return normalized
 
 
-def _normalize_ndjson(
-    records: list[dict[str, object]], repo_path: Path
-) -> list[dict[str, object]]:
+def _normalize_ndjson(records: list[dict[str, object]], repo_path: Path) -> list[dict[str, object]]:
     normalized = cast(list[dict[str, object]], json.loads(json.dumps(records)))
     for record in normalized:
         if record["record_type"] == "failure":
@@ -102,9 +92,7 @@ def test_cli_empty_languages_means_collect_nothing() -> None:
 
 
 def test_cli_ndjson_stream_contains_nodes_failures_and_summary() -> None:
-    proc = _run(
-        ["--stdout", "--format", "ndjson", "--flatten", "file", "--include-tests"]
-    )
+    proc = _run(["--stdout", "--format", "ndjson", "--flatten", "file", "--include-tests"])
     assert proc.returncode == 2
     records = _json_lines(proc.stdout)
     record_types = [record["record_type"] for record in records]
@@ -115,9 +103,7 @@ def test_cli_ndjson_stream_contains_nodes_failures_and_summary() -> None:
 
 
 def test_cli_json_envelope_is_stable() -> None:
-    proc = _run(
-        ["--stdout", "--format", "json", "--flatten", "node", "--include-tests"]
-    )
+    proc = _run(["--stdout", "--format", "json", "--flatten", "node", "--include-tests"])
     assert proc.returncode == 2
     payload = json.loads(proc.stdout)
     assert payload["schema_version"] == "1"
@@ -140,9 +126,7 @@ def test_cli_json_matches_golden_fixture() -> None:
     )
     assert proc.returncode == 2
     payload = _normalize_json_payload(json.loads(proc.stdout), CLI_FIXTURE)
-    expected = json.loads(
-        (GOLDEN_ROOT / "cli_fixture_json.json").read_text(encoding="utf-8")
-    )
+    expected = json.loads((GOLDEN_ROOT / "cli_fixture_json.json").read_text(encoding="utf-8"))
     assert payload == expected
 
 
@@ -154,9 +138,7 @@ def test_cli_code_units_matches_golden_fixture() -> None:
     assert proc.returncode == 2
     payload = _normalize_code_units_payload(json.loads(proc.stdout), CLI_FIXTURE)
     assert payload["schema_version"] == "3"
-    expected = json.loads(
-        (GOLDEN_ROOT / "cli_fixture_code_units.json").read_text(encoding="utf-8")
-    )
+    expected = json.loads((GOLDEN_ROOT / "cli_fixture_code_units.json").read_text(encoding="utf-8"))
     assert payload == expected
 
 

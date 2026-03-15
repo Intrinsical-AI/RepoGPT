@@ -16,9 +16,7 @@ class PythonParser(ParserInterface):
         if content is None:
             content = path.read_text(encoding="utf-8", errors="replace")
         tree = ast.parse(content, filename=str(path))
-        relative_path = str(
-            parser_input.file_info.get("relative_path") or path.as_posix()
-        )
+        relative_path = str(parser_input.file_info.get("relative_path") or path.as_posix())
         total_lines = len(content.splitlines()) or 1
 
         root = CodeNode(
@@ -39,9 +37,7 @@ class PythonParser(ParserInterface):
             docstring=ast.get_docstring(tree),
             metrics={
                 "blank_lines": count_blank_lines(content),
-                "non_empty_lines": len(
-                    [line for line in content.splitlines() if line.strip()]
-                ),
+                "non_empty_lines": len([line for line in content.splitlines() if line.strip()]),
             },
             attributes={"relative_path": relative_path},
         )
@@ -191,9 +187,7 @@ class PythonParser(ParserInterface):
             docstring=ast.get_docstring(node),
             attributes={
                 "bases": [self._expr_to_source(base) for base in node.bases],
-                "decorators": [
-                    self._expr_to_source(dec) for dec in node.decorator_list
-                ],
+                "decorators": [self._expr_to_source(dec) for dec in node.decorator_list],
             },
         )
 
@@ -226,9 +220,7 @@ class PythonParser(ParserInterface):
             docstring=ast.get_docstring(node),
             attributes={
                 "is_async": isinstance(node, ast.AsyncFunctionDef),
-                "decorators": [
-                    self._expr_to_source(dec) for dec in node.decorator_list
-                ],
+                "decorators": [self._expr_to_source(dec) for dec in node.decorator_list],
                 "params": params,
                 "returns": self._expr_to_source(node.returns),
                 "visibility": self._visibility(node.name),
@@ -247,11 +239,7 @@ class PythonParser(ParserInterface):
             params.append(
                 {
                     "name": arg.arg,
-                    "kind": (
-                        "positional_only"
-                        if index < len(args.posonlyargs)
-                        else "positional"
-                    ),
+                    "kind": ("positional_only" if index < len(args.posonlyargs) else "positional"),
                     "annotation": self._expr_to_source(arg.annotation),
                     "default": default,
                 }
@@ -265,9 +253,7 @@ class PythonParser(ParserInterface):
                     "default": None,
                 }
             )
-        for kwonly_arg, kw_default in zip(
-            args.kwonlyargs, args.kw_defaults, strict=False
-        ):
+        for kwonly_arg, kw_default in zip(args.kwonlyargs, args.kw_defaults, strict=False):
             default_value = self._expr_to_source(kw_default)
             params.append(
                 {
@@ -313,9 +299,7 @@ class PythonParser(ParserInterface):
             elif param["kind"] == "kwarg":
                 rendered = f"**{rendered}"
             elif (
-                param["kind"] == "keyword_only"
-                and not saw_vararg
-                and not inserted_kwonly_separator
+                param["kind"] == "keyword_only" and not saw_vararg and not inserted_kwonly_separator
             ):
                 params.append("*")
                 inserted_kwonly_separator = True
@@ -347,9 +331,7 @@ class PythonParser(ParserInterface):
             return "protected"
         return "public"
 
-    def _associate_comments(
-        self, root: CodeNode, comments: list[dict[str, Any]]
-    ) -> None:
+    def _associate_comments(self, root: CodeNode, comments: list[dict[str, Any]]) -> None:
         def walk(node: CodeNode, comment: dict[str, Any]) -> CodeNode | None:
             if (
                 node.start_line is not None

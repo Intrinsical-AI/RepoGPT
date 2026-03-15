@@ -32,15 +32,9 @@ def test_docstring_examples_capture_methods_and_docstrings() -> None:
     root = _parse("docstring_examples.py")
     nodes = flatten_tree(root)
 
-    foo = next(
-        node for node in nodes if node["type"] == "function" and node["name"] == "foo"
-    )
-    bar = next(
-        node for node in nodes if node["type"] == "class" and node["name"] == "Bar"
-    )
-    baz = next(
-        node for node in nodes if node["type"] == "method" and node["name"] == "baz"
-    )
+    foo = next(node for node in nodes if node["type"] == "function" and node["name"] == "foo")
+    bar = next(node for node in nodes if node["type"] == "class" and node["name"] == "Bar")
+    baz = next(node for node in nodes if node["type"] == "method" and node["name"] == "baz")
 
     assert foo["docstring"] == "Docstring de foo"
     assert foo["attributes"]["signature"] == "foo()"
@@ -53,9 +47,7 @@ def test_docstring_examples_capture_methods_and_docstrings() -> None:
 def test_comments_are_attached_to_smallest_python_node() -> None:
     root = _parse("docstring_examples.py")
     comments = all_comments(root)
-    assert any(
-        "Comentario entre docstring y código" in comment["text"] for comment in comments
-    )
+    assert any("Comentario entre docstring y código" in comment["text"] for comment in comments)
     foo = next(child for child in root.children if child.name == "foo")
     assert foo.comments == [{"text": "Comentario entre docstring y código", "line": 3}]
 
@@ -79,9 +71,7 @@ def test_python_import_and_signature_semantics(tmp_path: Path) -> None:
     function = next(child for child in root.children if child.type == "function")
 
     assert imports[0].attributes["import_kind"] == "import"
-    assert imports[0].attributes["imported_names"] == [
-        {"name": "os", "asname": "operating_system"}
-    ]
+    assert imports[0].attributes["imported_names"] == [{"name": "os", "asname": "operating_system"}]
     assert imports[1].attributes["module"] == "pkg.sub"
     assert imports[1].attributes["is_relative"] is False
     assert function.attributes["is_async"] is True

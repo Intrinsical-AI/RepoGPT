@@ -31,9 +31,7 @@ def _parse_languages_arg(raw_languages: str | None) -> list[str] | None:
         return None
     if raw_languages == "":
         return []
-    return [
-        lang for lang in (s.strip().lower() for s in raw_languages.split(",")) if lang
-    ]
+    return [lang for lang in (s.strip().lower() for s in raw_languages.split(",")) if lang]
 
 
 def main() -> int:  # noqa: D401
@@ -70,9 +68,7 @@ def main() -> int:  # noqa: D401
             )
     if args.emit == "code-units" and args.format != "json":
         parser.error("--emit code-units only supports --format json")
-    to_stdout = args.stdout or (
-        args.output and Path(args.output).as_posix() == "/dev/stdout"
-    )
+    to_stdout = args.stdout or (args.output and Path(args.output).as_posix() == "/dev/stdout")
 
     conf = AnalysisConf(
         repo_path=Path(args.repo_path).resolve(),
@@ -94,9 +90,7 @@ def main() -> int:  # noqa: D401
             collector=SimpleCollector(),
             pipeline=SimplePipeline(parsers=parsers, processors={}),
             publisher=(
-                CodeUnitsPublisher()
-                if conf.emit_kind == "code-units"
-                else SimplePublisher()
+                CodeUnitsPublisher() if conf.emit_kind == "code-units" else SimplePublisher()
             ),
         ).run(runtime_conf=conf)
     except (FileNotFoundError, NotADirectoryError, PermissionError) as exc:
