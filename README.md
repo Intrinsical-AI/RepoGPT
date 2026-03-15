@@ -26,8 +26,19 @@ paths      CodeNode-trees  optional     JSON / NDJSON / stdout
 ```bash
 git clone https://github.com/MrCabss69/RepoGPT.git
 cd RepoGPT
+```
+
+**Recommended** (reproducible via `uv.lock`):
+
+```bash
+uv sync
+```
+
+**Alternative** (classic venv):
+
+```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"           # installs structlog, pathspec, pytest, ruff…
+pip install -e ".[dev]"
 ```
 
 ---
@@ -225,11 +236,17 @@ Capture with `pytest`’s `caplog`, or redirect STDERR to a file in CI.
 
 ## Development
 
-```bash
-ruff check .
-mypy src tests
-pytest -q
-```
+Available `make` targets:
+
+| Target | Command | Description |
+|---|---|---|
+| `make lint` | `ruff check .` | Lint |
+| `make type` | `mypy src tests` | Type check |
+| `make test` | `pytest -q` | Run tests |
+| `make clean` | — | Remove `__pycache__`, `.pytest_cache`, `.pyc` |
+| `make repogpt` | `python -m repogpt.app.cli` | Run CLI directly |
+
+Or run the raw commands directly without `make`.
 
 ### Project layout
 
@@ -274,6 +291,13 @@ The suite exercises:
 * **Next** – richer Python semantics without breaking schema v1
 * **Later** – caching by file-hash + parallel workers
 * **Later** – new languages once they meet the same contract
+
+---
+
+## Design notes
+
+- [docs/IDEA.md](docs/IDEA.md) — schema contract rationale, frozen guarantees, immediate goals.
+- [docs/CHALLENGES.md](docs/CHALLENGES.md) — open design questions, roadmap trade-offs, known limitations.
 
 ---
 
