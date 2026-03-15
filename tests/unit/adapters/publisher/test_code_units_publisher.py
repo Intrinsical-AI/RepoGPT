@@ -181,14 +181,9 @@ def test_publish_code_units_json(tmp_path: Path) -> None:
     )
     assert (
         payload["documents"][1]["content_hash"]
-        == hashlib.sha256(
-            payload["documents"][1]["content"].encode("utf-8")
-        ).hexdigest()
+        == hashlib.sha256(payload["documents"][1]["content"].encode("utf-8")).hexdigest()
     )
-    assert (
-        payload["documents"][1]["source_id"]
-        == f"repogpt:{tmp_path.name.lower()}:file:sample.py"
-    )
+    assert payload["documents"][1]["source_id"] == f"repogpt:{tmp_path.name.lower()}:file:sample.py"
     assert set(payload["documents"][1]["metadata"].keys()) == {
         "repo_key",
         "path",
@@ -355,9 +350,7 @@ def test_code_units_expose_canonical_fields_at_document_top_level(
 ) -> None:
     payload = _publish_payload(
         tmp_path=tmp_path,
-        results=[
-            _python_result(tmp_path, "sample.py", "def helper():\n    return 1\n")
-        ],
+        results=[_python_result(tmp_path, "sample.py", "def helper():\n    return 1\n")],
     )
 
     document = _document(payload)
@@ -434,15 +427,11 @@ def test_code_units_content_hash_changes_with_content_but_external_id_does_not(
 ) -> None:
     first = _publish_payload(
         tmp_path=tmp_path,
-        results=[
-            _python_result(tmp_path, "sample.py", "def helper():\n    return 1\n")
-        ],
+        results=[_python_result(tmp_path, "sample.py", "def helper():\n    return 1\n")],
     )
     second = _publish_payload(
         tmp_path=tmp_path,
-        results=[
-            _python_result(tmp_path, "sample.py", "def helper():\n    return 2\n")
-        ],
+        results=[_python_result(tmp_path, "sample.py", "def helper():\n    return 2\n")],
     )
 
     first_doc = _document(first)
@@ -457,15 +446,11 @@ def test_python_external_id_is_stable_when_function_is_shifted_by_leading_lines(
 ) -> None:
     first = _publish_payload(
         tmp_path=tmp_path,
-        results=[
-            _python_result(tmp_path, "sample.py", "def helper():\n    return 1\n")
-        ],
+        results=[_python_result(tmp_path, "sample.py", "def helper():\n    return 1\n")],
     )
     second = _publish_payload(
         tmp_path=tmp_path,
-        results=[
-            _python_result(tmp_path, "sample.py", "\n\n\ndef helper():\n    return 1\n")
-        ],
+        results=[_python_result(tmp_path, "sample.py", "\n\n\ndef helper():\n    return 1\n")],
     )
 
     assert _document(first)["external_id"] == _document(second)["external_id"]
@@ -484,9 +469,7 @@ def test_markdown_heading_external_id_uses_heading_path(tmp_path: Path) -> None:
     )
 
     heading_ids = [
-        doc["external_id"]
-        for doc in _documents(payload)
-        if doc["unit_type"] == "heading"
+        doc["external_id"] for doc in _documents(payload) if doc["unit_type"] == "heading"
     ]
 
     assert heading_ids == [
@@ -509,12 +492,8 @@ def test_markdown_code_block_external_id_is_stable_within_same_section_ordinal(
         results=[_markdown_result(tmp_path, "guide.md", content.replace("1", "2"))],
     )
 
-    first_code_block = next(
-        doc for doc in _documents(first) if doc["unit_type"] == "code_block"
-    )
-    second_code_block = next(
-        doc for doc in _documents(second) if doc["unit_type"] == "code_block"
-    )
+    first_code_block = next(doc for doc in _documents(first) if doc["unit_type"] == "code_block")
+    second_code_block = next(doc for doc in _documents(second) if doc["unit_type"] == "code_block")
 
     assert first_code_block["external_id"] == second_code_block["external_id"]
     assert first_code_block["content_hash"] != second_code_block["content_hash"]
@@ -527,18 +506,14 @@ def test_snapshot_id_can_change_while_document_content_hash_stays_stable(
     other_v1 = PipelineResult(
         path=tmp_path / "other.py",
         language="py",
-        root=CodeNode(
-            id="other", type="module", name="other", language="py", path="other.py"
-        ),
+        root=CodeNode(id="other", type="module", name="other", language="py", path="other.py"),
         file_info={"relative_path": "other.py", "size": 1, "sha256": "aaa"},
         content="x",
     )
     other_v2 = PipelineResult(
         path=tmp_path / "other.py",
         language="py",
-        root=CodeNode(
-            id="other", type="module", name="other", language="py", path="other.py"
-        ),
+        root=CodeNode(id="other", type="module", name="other", language="py", path="other.py"),
         file_info={"relative_path": "other.py", "size": 1, "sha256": "bbb"},
         content="y",
     )

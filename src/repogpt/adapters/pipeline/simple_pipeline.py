@@ -75,9 +75,7 @@ class SimplePipeline(PipelinePort):
                 content=content,
             )
         except Exception as exc:  # noqa: BLE001 – queremos capturarlo todo
-            tb_short = "\n".join(
-                traceback.format_exception_only(type(exc), exc)
-            ).strip()
+            tb_short = "\n".join(traceback.format_exception_only(type(exc), exc)).strip()
             logger.exception("pipeline error", path=file, error=tb_short)
             return PipelineResult(
                 path=file,

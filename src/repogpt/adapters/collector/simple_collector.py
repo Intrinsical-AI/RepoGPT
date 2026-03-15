@@ -33,16 +33,12 @@ def load_pathspec(repo_root: Path) -> pathspec.PathSpec | None:
     ignore_file = repo_root / ".repogptignore"
     if ignore_file.exists():
         with ignore_file.open("r") as f:
-            lines = [
-                line for line in f if line.strip() and not line.strip().startswith("#")
-            ]
+            lines = [line for line in f if line.strip() and not line.strip().startswith("#")]
         return pathspec.PathSpec.from_lines("gitwildmatch", lines)
     return None
 
 
-def ignore_reason(
-    p: Path, repo_root: Path, spec: pathspec.PathSpec | None = None
-) -> str | None:
+def ignore_reason(p: Path, repo_root: Path, spec: pathspec.PathSpec | None = None) -> str | None:
     """Return the first ignore reason that applies to a path, if any."""
     rel = p.relative_to(repo_root)
     if any(part in DEFAULT_IGNORES for part in rel.parts):
@@ -54,9 +50,7 @@ def ignore_reason(
     return None
 
 
-def should_ignore(
-    p: Path, repo_root: Path, spec: pathspec.PathSpec | None = None
-) -> bool:
+def should_ignore(p: Path, repo_root: Path, spec: pathspec.PathSpec | None = None) -> bool:
     """Return True when a path should be excluded by built-ins or ignore rules."""
     return ignore_reason(p, repo_root, spec) is not None
 
@@ -68,13 +62,9 @@ class SimpleCollector(CollectorPort):
         if not repo_root.exists():
             raise FileNotFoundError(f"Repository path '{repo_root}' does not exist")
         if not repo_root.is_dir():
-            raise NotADirectoryError(
-                f"Repository path '{repo_root}' is not a directory"
-            )
+            raise NotADirectoryError(f"Repository path '{repo_root}' is not a directory")
 
-        allowed_exts = (
-            set(conf.languages) if conf.languages is not None else set(parsers.keys())
-        )
+        allowed_exts = set(conf.languages) if conf.languages is not None else set(parsers.keys())
         spec = load_pathspec(repo_root)
         files: list[Path] = []
         skipped: list[Path] = []
