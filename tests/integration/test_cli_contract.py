@@ -153,7 +153,7 @@ def test_cli_code_units_matches_golden_fixture() -> None:
     )
     assert proc.returncode == 2
     payload = _normalize_code_units_payload(json.loads(proc.stdout), CLI_FIXTURE)
-    assert payload["schema_version"] == "2"
+    assert payload["schema_version"] == "3"
     expected = json.loads(
         (GOLDEN_ROOT / "cli_fixture_code_units.json").read_text(encoding="utf-8")
     )
@@ -169,7 +169,8 @@ def test_cli_code_units_documents_are_consumable_without_metadata() -> None:
     payload = json.loads(proc.stdout)
     document = payload["documents"][0]
 
-    assert payload["schema_version"] == "2"
+    assert payload["schema_version"] == "3"
+    assert payload["replace_scope"] is True
     assert {
         "external_id",
         "source_id",
@@ -186,8 +187,14 @@ def test_cli_code_units_documents_are_consumable_without_metadata() -> None:
         "content_hash",
         "metadata",
     }.issubset(document.keys())
-    assert "path" not in document["metadata"]
-    assert "unit_type" not in document["metadata"]
+    assert document["metadata"]["repo_key"] == document["repo_key"]
+    assert document["metadata"]["path"] == document["path"]
+    assert document["metadata"]["language"] == document["language"]
+    assert document["metadata"]["unit_type"] == document["unit_type"]
+    assert document["metadata"]["symbol"] == document["symbol"]
+    assert document["metadata"]["start_line"] == document["start_line"]
+    assert document["metadata"]["end_line"] == document["end_line"]
+    assert document["metadata"]["content_hash"] == document["content_hash"]
 
 
 def test_cli_ndjson_matches_golden_fixture() -> None:

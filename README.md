@@ -152,11 +152,12 @@ docs/build/
 
 ```json
 {
-  "schema_version": "2",
+  "schema_version": "3",
   "kind": "code-units",
   "repo_key": "my-repo",
   "snapshot_id": "my-repo-4f1f0c9b8d1a2e3f",
   "scope": "repogpt:my-repo",
+  "replace_scope": true,
   "stats": { "total_files": 3, "ok_files": 2, "failed_files": 1, "emitted_documents": 4 },
   "failures": [{ "path": "bad.py", "language": "py", "error": "...", "file": { "sha256": "...", "size": 42 } }],
   "documents": [
@@ -175,6 +176,14 @@ docs/build/
       "content": "def helper():\n    return 1\n",
       "content_hash": "f9f4c6f5d2b8d7c89d8f6d1e8c5dbe4f6f8ed0bdb0d85c6d7d064c93f8b5f4c9",
       "metadata": {
+        "repo_key": "my-repo",
+        "path": "src/app.py",
+        "language": "py",
+        "unit_type": "function",
+        "symbol": "helper",
+        "start_line": 1,
+        "end_line": 2,
+        "content_hash": "f9f4c6f5d2b8d7c89d8f6d1e8c5dbe4f6f8ed0bdb0d85c6d7d064c93f8b5f4c9",
         "file": { "sha256": "...", "size": 42 },
         "tags": [],
         "attributes": {},
@@ -185,12 +194,13 @@ docs/build/
 }
 ```
 
-`--emit code-units` uses a dedicated public contract in schema `2`:
+`--emit code-units` uses a dedicated public contract in schema `3`:
 
 * `external_id` is semantic and stable per unit, not derived from the internal AST `node.id`.
 * `content_hash` is `sha256(content)` for the exact emitted span and is the per-document change signal.
 * `snapshot_id` remains a repo-snapshot marker based on file hashes; it is provenance, not a per-document delta key.
-* Canonical fields such as `path`, `language`, `unit_type`, `symbol`, `start_line` and `end_line` live at the top level of each document. `metadata` is auxiliary only.
+* `replace_scope: true` is emitted so canonical importers can do scope sync without extra wiring.
+* Canonical fields such as `path`, `language`, `unit_type`, `symbol`, `start_line` and `end_line` live at the top level of each document and are duplicated in `metadata` for generic downstream filtering/import flows.
 
 ---
 

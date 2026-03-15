@@ -13,7 +13,7 @@ from repogpt.core.ports import PublisherPort
 from repogpt.models import AnalysisConf, CodeNode, PipelineResult
 from repogpt.utils.tree_utils import iter_nodes
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 KIND = "code-units"
 logger = structlog.get_logger(__name__)
 
@@ -59,6 +59,34 @@ def _markdown_segment(value: str | None) -> str:
     return _slugify(value or "section")
 
 
+def _queryable_metadata(
+    *,
+    repo_key: str,
+    path: str,
+    language: str | None,
+    unit_type: str,
+    symbol: str | None,
+    start_line: int | None,
+    end_line: int | None,
+    content_hash: str,
+) -> dict[str, Any]:
+    values = {
+        "repo_key": repo_key,
+        "path": path,
+        "language": language,
+        "unit_type": unit_type,
+        "symbol": symbol,
+        "start_line": start_line,
+        "end_line": end_line,
+        "content_hash": content_hash,
+    }
+    return {
+        key: value
+        for key, value in values.items()
+        if value is not None and (not isinstance(value, str) or value.strip())
+    }
+
+
 class CodeUnitsPublisher(PublisherPort):
     def publish(
         self, results: list[PipelineResult], conf: AnalysisConf
@@ -87,6 +115,7 @@ class CodeUnitsPublisher(PublisherPort):
             "repo_key": repo_key,
             "snapshot_id": snapshot_id,
             "scope": scope,
+            "replace_scope": True,
             "stats": {
                 "total_files": len(results),
                 "ok_files": len(ok_results),
@@ -169,6 +198,7 @@ class CodeUnitsPublisher(PublisherPort):
                 start_line=node.start_line,
                 end_line=node.end_line,
             )
+            content_hash = _content_hash(span_content)
             docs.append(
                 {
                     "external_id": external_ids[node.id],
@@ -183,8 +213,18 @@ class CodeUnitsPublisher(PublisherPort):
                     "start_line": node.start_line,
                     "end_line": node.end_line,
                     "content": span_content,
-                    "content_hash": _content_hash(span_content),
+                    "content_hash": content_hash,
                     "metadata": {
+                        **_queryable_metadata(
+                            repo_key=repo_key,
+                            path=relative_path,
+                            language=node.language,
+                            unit_type=node.type,
+                            symbol=node.name,
+                            start_line=node.start_line,
+                            end_line=node.end_line,
+                            content_hash=content_hash,
+                        ),
                         "file": {
                             "sha256": file_sha,
                             "size": result.file_info.get("size"),

@@ -1,9 +1,10 @@
 {
-  "schema_version": "2",
+  "schema_version": "3",
   "kind": "code-units",
   "repo_key": "cli_repo",
   "snapshot_id": "<SNAPSHOT_ID>",
   "scope": "repogpt:cli_repo",
+  "replace_scope": true,
   "stats": {
     "total_files": 3,
     "ok_files": 2,
@@ -13,7 +14,7 @@
   "failures": [
     {
       "record_type": "failure",
-      "schema_version": "2",
+      "schema_version": "3",
       "path": "bad.py",
       "language": "py",
       "error": "File \"<REPO_ROOT>/bad.py\", line 1\n\n    def broken(:\n\n               ^\n\nSyntaxError: invalid syntax",
@@ -39,6 +40,14 @@
       "content": "# Demo\n\n<!-- TODO: document -->\n\n[Docs](https://example.com)\n\n```python\nprint(\"ok\")\n```\n",
       "content_hash": "5a87f3df70d35798225f6704cd76e098ec06f4e69833e8a77054120456e5b79c",
       "metadata": {
+        "repo_key": "cli_repo",
+        "path": "sample.md",
+        "language": "md",
+        "unit_type": "heading",
+        "symbol": "Demo",
+        "start_line": 1,
+        "end_line": 9,
+        "content_hash": "5a87f3df70d35798225f6704cd76e098ec06f4e69833e8a77054120456e5b79c",
         "file": {
           "sha256": "5a87f3df70d35798225f6704cd76e098ec06f4e69833e8a77054120456e5b79c",
           "size": 88
@@ -65,6 +74,14 @@
       "content": "```python\nprint(\"ok\")\n```\n",
       "content_hash": "cc888e6d1095f073cac7df83bf4d44ed6cf1744e0b7f54865a86ac5d95976c55",
       "metadata": {
+        "repo_key": "cli_repo",
+        "path": "sample.md",
+        "language": "md",
+        "unit_type": "code_block",
+        "symbol": "python",
+        "start_line": 7,
+        "end_line": 9,
+        "content_hash": "cc888e6d1095f073cac7df83bf4d44ed6cf1744e0b7f54865a86ac5d95976c55",
         "file": {
           "sha256": "5a87f3df70d35798225f6704cd76e098ec06f4e69833e8a77054120456e5b79c",
           "size": 88
@@ -91,6 +108,14 @@
       "content": "class Demo:\n    def method(self, value: int) -> int:\n        return value\n",
       "content_hash": "b4fe3e512675413a01b8b14f43c80963b0c38a9855afb311075cd609bf717795",
       "metadata": {
+        "repo_key": "cli_repo",
+        "path": "sample.py",
+        "language": "py",
+        "unit_type": "class",
+        "symbol": "Demo",
+        "start_line": 4,
+        "end_line": 6,
+        "content_hash": "b4fe3e512675413a01b8b14f43c80963b0c38a9855afb311075cd609bf717795",
         "file": {
           "sha256": "774e76c0483e7970035e1e4ea43638b87dbef3fbd6c6b7a3b68289a6b4f76560",
           "size": 144
@@ -118,6 +143,14 @@
       "content": "    def method(self, value: int) -> int:\n        return value\n",
       "content_hash": "c16e938fe365e6eaf6a245d1fdfdc20baf10f3f59454beba70de669504ab027b",
       "metadata": {
+        "repo_key": "cli_repo",
+        "path": "sample.py",
+        "language": "py",
+        "unit_type": "method",
+        "symbol": "method",
+        "start_line": 5,
+        "end_line": 6,
+        "content_hash": "c16e938fe365e6eaf6a245d1fdfdc20baf10f3f59454beba70de669504ab027b",
         "file": {
           "sha256": "774e76c0483e7970035e1e4ea43638b87dbef3fbd6c6b7a3b68289a6b4f76560",
           "size": 144
@@ -162,6 +195,14 @@
       "content": "def helper(name: str = \"world\") -> str:\n    return name\n",
       "content_hash": "d289ca7f09c9d375eaa4eff2ec00a5857958fb27f5c2845c7039ecee586907d2",
       "metadata": {
+        "repo_key": "cli_repo",
+        "path": "sample.py",
+        "language": "py",
+        "unit_type": "function",
+        "symbol": "helper",
+        "start_line": 9,
+        "end_line": 10,
+        "content_hash": "d289ca7f09c9d375eaa4eff2ec00a5857958fb27f5c2845c7039ecee586907d2",
         "file": {
           "sha256": "774e76c0483e7970035e1e4ea43638b87dbef3fbd6c6b7a3b68289a6b4f76560",
           "size": 144
