@@ -69,7 +69,7 @@ def all_tags(root: CodeNode) -> list[str]:
 
 # Avanzado: filtrado por predicado arbitrario
 def nodes_where(
-    root: CodeNode, predicate: Callable[[dict[str, Any]], bool]
+    root: CodeNode, predicate: Callable[[CodeNode], bool]
 ) -> list[dict[str, Any]]:
     """Devuelve nodos que cumplen una condición arbitraria."""
-    return [n_dict for n in iter_nodes(root) if predicate((n_dict := _node_to_dict(n)))]
+    return [_node_to_dict(n) for n in iter_nodes(root) if predicate(n)]
