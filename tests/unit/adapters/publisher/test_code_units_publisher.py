@@ -9,7 +9,7 @@ import pytest
 
 from repogpt.adapters.parser.md_parser import MarkdownParser
 from repogpt.adapters.parser.py_parser import PythonParser
-from repogpt.adapters.publisher.code_units_publisher import CodeUnitsPublisher
+from repogpt.adapters.publisher.code_units_publisher import CodeUnitsPublisher, _extract_span_text
 from repogpt.models import AnalysisConf, CodeNode, ParserInput, PipelineResult
 
 
@@ -526,3 +526,95 @@ def test_snapshot_id_can_change_while_document_content_hash_stays_stable(
     assert first["snapshot_id"] != second["snapshot_id"]
     assert first_doc["snapshot_id"] != second_doc["snapshot_id"]
     assert first_doc["content_hash"] == second_doc["content_hash"]
+
+
+# ── BUG-3: _python_external_ids loop ─────────────────────────────────────────
+
+
+def test_python_external_id_qualified_symbol_no_duplicate(tmp_path: Path) -> None:
+    # Regresión: el loop viejo hacía append del mismo nodo dos veces cuando
+    # se alcanzaba un nodo sin padre en el árbol, produciendo "Demo.method.method".
+    payload = _publish_payload(
+        tmp_path=tmp_path,
+        results=[
+            _python_result(
+                tmp_path,
+                "sample.py",
+                "class Demo:\n    def method(self):\n        pass\n",
+            )
+        ],
+    )
+    method_doc = next(doc for doc in _documents(payload) if doc["unit_type"] == "method")
+    assert method_doc["symbol"] == "method"
+    assert method_doc["external_id"].endswith(":method:Demo.method")
+
+
+def test_python_external_id_orphaned_node_symbol_is_not_duplicated(
+    tmp_path: Path,
+) -> None:
+    # Nodo con parent_id apuntando a un ID que no existe en el árbol.
+    # El loop corregido sólo debe agregar el nombre una vez.
+    orphan = CodeNode(
+        id="orphan-fn",
+        type="function",
+        name="lost_func",
+        language="py",
+        path="sample.py",
+        start_line=1,
+        end_line=2,
+        parent_id="ghost-id",  # no existe en el árbol
+    )
+    root = CodeNode(
+        id="module-1",
+        type="module",
+        name="sample",
+        language="py",
+        path="sample.py",
+        start_line=1,
+        end_line=2,
+        children=[orphan],
+    )
+    sample = tmp_path / "sample.py"
+    sample.write_text("def lost_func():\n    pass\n", encoding="utf-8")
+    result = PipelineResult(
+        path=sample,
+        language="py",
+        root=root,
+        file_info={"relative_path": "sample.py", "size": 2, "sha256": "x"},
+        content=sample.read_text(encoding="utf-8"),
+    )
+    output = tmp_path / "out.json"
+    CodeUnitsPublisher().publish(
+        [result], AnalysisConf(repo_path=tmp_path, output=output, emit_kind="code-units")
+    )
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    fn_doc = next(doc for doc in payload["documents"] if doc["unit_type"] == "function")
+    # El símbolo debe ser sólo "lost_func", nunca "lost_func.lost_func"
+    assert fn_doc["symbol"] == "lost_func"
+    assert fn_doc["external_id"].endswith(":function:lost_func")
+
+
+# ── BUG-4: _extract_span_text ─────────────────────────────────────────────────
+
+
+def test_extract_span_text_returns_empty_for_inverted_range() -> None:
+    content = "line1\nline2\nline3\n"
+    lines = content.splitlines(keepends=True)
+    # start_line > end_line → rango inválido → debe devolver ""
+    result = _extract_span_text(content=content, lines=lines, start_line=5, end_line=2)
+    assert result == ""
+
+
+def test_extract_span_text_returns_empty_for_zero_width_range() -> None:
+    content = "line1\nline2\nline3\n"
+    lines = content.splitlines(keepends=True)
+    # start_line=3, end_line=2 → start_idx=2, end_idx=2 → start_idx >= end_idx → ""
+    result = _extract_span_text(content=content, lines=lines, start_line=3, end_line=2)
+    assert result == ""
+
+
+def test_extract_span_text_valid_range_returns_correct_span() -> None:
+    content = "line1\nline2\nline3\n"
+    lines = content.splitlines(keepends=True)
+    result = _extract_span_text(content=content, lines=lines, start_line=2, end_line=3)
+    assert result == "line2\nline3\n"

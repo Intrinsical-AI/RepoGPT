@@ -76,7 +76,6 @@ def is_likely_binary(file_path: Path, check_bytes: int = 1024) -> bool:
         logger.warning("unexpected error while checking binary", path=str(file_path), error=str(e))
         return False  # Asumir no binario
 
-    logger.debug("file does not look binary", path=str(file_path))
     return False
 
 

@@ -24,9 +24,9 @@ class SimplePublisher(PublisherPort):
         if result.root is None:
             return
         nodes = (
-            flatten_tree(result.root)
+            flatten_tree(result.root)  # "node": lista plana, sin campo children
             if conf.flatten_kind == "node"
-            else [dataclasses.asdict(result.root)]
+            else [dataclasses.asdict(result.root)]  # "file": árbol completo con children anidados
         )
         for node in nodes:
             yield {

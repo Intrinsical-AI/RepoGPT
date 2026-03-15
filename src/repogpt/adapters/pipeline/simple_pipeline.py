@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import traceback
 from pathlib import Path
 from typing import Any, Generic, Protocol, TypeVar
@@ -16,7 +17,6 @@ from repogpt.models import (
     ParserInput,
     PipelineResult,
 )
-from repogpt.utils.file_utils import calculate_file_hash
 
 logger = structlog.get_logger(__name__)
 
@@ -44,11 +44,12 @@ class SimplePipeline(PipelinePort):
     def process(self, file: Path, conf: AnalysisConf) -> PipelineResult:  # noqa: D401
         relative_path = file.resolve().relative_to(conf.repo_path.resolve()).as_posix()
         ext = file.suffix.lower().lstrip(".")
-        content = file.read_text(encoding="utf-8", errors="replace")
+        raw_bytes = file.read_bytes()
+        content = raw_bytes.decode("utf-8", errors="replace")
         file_info = {
             "relative_path": relative_path,
-            "size": file.stat().st_size,
-            "sha256": calculate_file_hash(file),
+            "size": len(raw_bytes),
+            "sha256": hashlib.sha256(raw_bytes).hexdigest(),
         }
 
         parser = self.parsers.get(ext)

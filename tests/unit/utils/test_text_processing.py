@@ -113,6 +113,39 @@ def test_comments_edge_cases_md() -> None:
     assert any("ComentarioSinEspacios" in t for t in texts)
 
 
+# ── EDGE-3: líneas de comentarios HTML con bisect ────────────────────────────
+
+
+def test_markdown_comment_line_numbers_are_correct() -> None:
+    # Comentario en línea 1, 3, y multilínea que empieza en 5.
+    content = "<!-- first -->\ntext\n<!-- second -->\nmore\n<!-- third\nend -->\n"
+    comments = extract_comments(content, language="markdown")
+    assert [c["line"] for c in comments] == [1, 3, 5]
+
+
+def test_markdown_comment_on_first_line() -> None:
+    comments = extract_comments("<!-- hello -->\nnext line", language="markdown")
+    assert comments[0]["line"] == 1
+
+
+def test_markdown_comment_after_several_newlines() -> None:
+    content = "\n\n\n<!-- deep -->"
+    comments = extract_comments(content, language="markdown")
+    assert comments[0]["line"] == 4
+
+
+def test_markdown_comment_line_numbers_match_old_behavior() -> None:
+    # Propiedad: bisect_left produce el mismo resultado que el count("\n") original.
+    content = "line1\n<!-- a -->\nline3\n\n<!-- b -->\n<!-- c -->"
+    comments = extract_comments(content, language="markdown")
+    expected_lines = [
+        content.count("\n", 0, content.index("<!-- a -->")) + 1,
+        content.count("\n", 0, content.index("<!-- b -->")) + 1,
+        content.count("\n", 0, content.index("<!-- c -->")) + 1,
+    ]
+    assert [c["line"] for c in comments] == expected_lines
+
+
 def test_extract_comments_logs_debug_when_python_tokenization_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

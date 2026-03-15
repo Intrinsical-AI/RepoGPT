@@ -12,8 +12,8 @@ class AnalysisConf:
     max_file_size: int = 2_000_000
     languages: list[str] | None = None
     output: Path | None = None
-    flatten_kind: str = "node"
-    output_format: str = "json"
+    flatten_kind: Literal["node", "file"] = "node"
+    output_format: Literal["json", "ndjson"] = "json"
     to_stdout: bool = False
     emit_kind: Literal["ast", "code-units"] = "ast"
     # --- phase‑3 ---

@@ -36,10 +36,10 @@ def _extract_span_text(
         return content
     if not lines:
         return content
-    start_idx = max(0, int(start_line) - 1)
-    end_idx = min(len(lines), int(end_line))
+    start_idx = max(0, start_line - 1)
+    end_idx = min(len(lines), end_line)
     if start_idx >= end_idx:
-        return content
+        return ""
     return "".join(lines[start_idx:end_idx])
 
 
@@ -286,17 +286,17 @@ class CodeUnitsPublisher(PublisherPort):
                 continue
             symbol_parts: list[str] = []
             current = node
-            while current.parent_id is not None:
+            while True:
                 if current.name and current.type in {"class", "function", "method"}:
                     symbol_parts.append(current.name)
+                if current.parent_id is None:
+                    break
                 parent = nodes.get(current.parent_id)
                 if parent is None:
                     break
                 current = parent
                 if current.id not in selected_ids and current.type == "module":
                     break
-            if current.name and current.type in {"class", "function", "method"}:
-                symbol_parts.append(current.name)
             qualified_symbol = _join_symbol_path(list(reversed(symbol_parts))) or (node.name or "")
             external_ids[node.id] = (
                 f"repogpt:{repo_key}:{relative_path}:{node.type}:{qualified_symbol}"

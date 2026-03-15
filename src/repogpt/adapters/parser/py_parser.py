@@ -332,19 +332,16 @@ class PythonParser(ParserInterface):
         return "public"
 
     def _associate_comments(self, root: CodeNode, comments: list[dict[str, Any]]) -> None:
-        def walk(node: CodeNode, comment: dict[str, Any]) -> CodeNode | None:
-            if (
-                node.start_line is not None
-                and node.end_line is not None
-                and node.start_line <= comment["line"] <= node.end_line
-            ):
-                for child in node.children:
-                    found = walk(child, comment)
-                    if found is not None:
-                        return found
-                return node
-            return None
-
         for comment in comments:
-            owner = walk(root, comment) or root
-            owner.comments.append(comment)
+            target = root
+            stack = [root]
+            while stack:
+                node = stack.pop()
+                if (
+                    node.start_line is not None
+                    and node.end_line is not None
+                    and node.start_line <= comment["line"] <= node.end_line
+                ):
+                    target = node
+                    stack.extend(reversed(node.children))
+            target.comments.append(comment)

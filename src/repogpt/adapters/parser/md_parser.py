@@ -11,7 +11,7 @@ from repogpt.utils.text_processing import count_blank_lines, extract_comments
 class MarkdownParser(ParserInterface):
     HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
     LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
-    FENCE_RE = re.compile(r"^```([^\s`]*)\s*$")
+    FENCE_RE = re.compile(r"^(```|~~~)(\S*)(?: .*)?$")
 
     def _close_headings(
         self, heading_stack: list[CodeNode], *, min_level: int, end_line: int
@@ -82,9 +82,6 @@ class MarkdownParser(ParserInterface):
             metrics={
                 "blank_lines": count_blank_lines(content),
                 "non_empty_lines": len([line for line in lines if line.strip()]),
-                "heading_count": heading_count,
-                "code_block_count": code_block_count,
-                "link_count": link_count,
             },
             attributes={"relative_path": relative_path},
         )
@@ -98,10 +95,11 @@ class MarkdownParser(ParserInterface):
                 if open_code_block is None:
                     open_code_block = {
                         "start_line": line_number,
-                        "fence_language": fence_match.group(1) or None,
+                        "fence_language": fence_match.group(2) or None,
+                        "delimiter": fence_match.group(1),
                         "parent": heading_stack[-1] if heading_stack else root,
                     }
-                else:
+                elif fence_match.group(1) == open_code_block["delimiter"]:
                     code_block = self._build_code_block_node(
                         relative_path=relative_path,
                         parent=open_code_block["parent"],
