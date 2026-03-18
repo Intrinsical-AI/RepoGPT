@@ -184,15 +184,15 @@ def test_collect_skips_file_that_disappears_during_stat(tmp_path: Path) -> None:
     vanishing.write_text("x=2", encoding="utf-8")
 
     original_stat = Path.stat
-    # Cuenta las llamadas stat(follow_symlinks=True) para vanishing.py.
-    # La primera la hace is_file() y debe pasar; la segunda la hace
-    # nuestro p.stat().st_size explícito y debe fallar.
+    # Raises OSError on the first call to Path.stat() for vanishing.py.
+    # In Python 3.14+ is_file() no longer routes through Path.stat(), so the
+    # explicit p.stat().st_size in the collector is the first (and only) call.
     call_counts: dict[str, int] = {}
 
     def flaky_stat(self: Path, *, follow_symlinks: bool = True) -> os.stat_result:
         if self.name == "vanishing.py" and follow_symlinks:
             call_counts[str(self)] = call_counts.get(str(self), 0) + 1
-            if call_counts[str(self)] >= 2:
+            if call_counts[str(self)] >= 1:
                 raise OSError("file vanished")
         return original_stat(self, follow_symlinks=follow_symlinks)
 

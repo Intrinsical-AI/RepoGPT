@@ -25,7 +25,7 @@ paths      CodeNode-trees  optional     JSON / NDJSON / stdout
 ## Installation
 
 ```bash
-git clone https://github.com/MrCabss69/RepoGPT.git
+git clone https://github.com/Intrinsical-AI/RepoGPT.git
 cd RepoGPT
 ```
 

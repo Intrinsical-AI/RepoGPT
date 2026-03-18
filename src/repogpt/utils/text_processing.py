@@ -40,8 +40,8 @@ def extract_comments(content: str, language: str = "python") -> list[dict[str, A
                 error=str(exc),
             )
     elif language == "markdown":
-        # Busca <!-- ... --> comentarios HTML.
-        # Pre-computa posiciones de \n una sola vez: O(N) en lugar de O(N×M).
+        # Searc <!-- ... -->  HTML comments
+        # Pre-compute \n pos only one time: O(N) (upgrade from O(N×M))
         newline_offsets = [i for i, ch in enumerate(content) if ch == "\n"]
         for match in re.finditer(r"<!--(.*?)-->", content, re.DOTALL):
             line = bisect.bisect_left(newline_offsets, match.start()) + 1
@@ -51,7 +51,7 @@ def extract_comments(content: str, language: str = "python") -> list[dict[str, A
                     "line": line,
                 }
             )
-    # Puedes añadir más lenguajes aquí
+    # Add langs here
     return comments
 
 

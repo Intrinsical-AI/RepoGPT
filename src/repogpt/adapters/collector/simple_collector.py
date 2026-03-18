@@ -58,7 +58,7 @@ def should_ignore(p: Path, repo_root: Path, spec: pathspec.PathSpec | None = Non
 class SimpleCollector(CollectorPort):
     def collect(self, conf: AnalysisConf) -> CollectionResult:
         repo_root = conf.repo_path.resolve()
-        # ---------- sanity checks ----------
+        # sanity checks
         if not repo_root.exists():
             raise FileNotFoundError(f"Repository path '{repo_root}' does not exist")
         if not repo_root.is_dir():
@@ -86,7 +86,7 @@ class SimpleCollector(CollectorPort):
                 slogger.debug("skip", path=str(p), reason="unsupported_extension")
                 skipped.append(p)
                 continue
-            # Excluye tests si así lo pide la conf
+            # Exclude tests if config requires
             if not conf.include_tests:
                 rel_parts = p.relative_to(repo_root).parts
                 if "tests" in rel_parts or p.name.startswith(("test_", "test-")):
@@ -94,7 +94,7 @@ class SimpleCollector(CollectorPort):
                     skipped.append(p)
                     continue
 
-            # Filtrar por tamaño y binarios
+            # Filter bin files and by size
             try:
                 file_size = p.stat().st_size
             except OSError:
