@@ -7,13 +7,16 @@ from pathlib import Path
 
 import structlog
 
-from repogpt.adapters.publisher.code_units_publisher import CodeUnitsPublisher
-from repogpt.adapters.collector.simple_collector import SimpleCollector
-from repogpt.adapters.parser import parsers
-from repogpt.adapters.pipeline.simple_pipeline import SimplePipeline
-from repogpt.adapters.publisher.simple_publisher import SimplePublisher
-from repogpt.core.service import CodeRepoAnalysisService
-from repogpt.models import AnalysisConf
+from repogpt.adapters.fs.collector import DefaultCollector
+from repogpt.adapters.fs.loader import DefaultLoader
+from repogpt.adapters.parsers.registry import StaticParserRegistry
+from repogpt.adapters.projectors.ast_projector import AstProjector
+from repogpt.adapters.projectors.code_units_projector import CodeUnitsProjector
+from repogpt.adapters.writers.artifact_writer import ArtifactWriter
+from repogpt.application.analyze_repo import AnalyzeRepo
+from repogpt.application.exit_codes import exit_code_for_result
+from repogpt.domain.analysis import AnalysisRequest, OutputTarget
+from repogpt.domain.errors import InvalidRepoError
 
 LEVELS: dict[str, int] = {"DEBUG": logging.DEBUG, "INFO": logging.INFO}
 
@@ -55,45 +58,62 @@ def main() -> int:  # noqa: D401
 
     _configure_logging(args.log_level)
     log = structlog.get_logger()
+    registry = StaticParserRegistry()
 
     langs = _parse_languages_arg(args.languages)
     if langs is not None:
-        unsupported = sorted(set(langs) - set(parsers.keys()))
+        unsupported = sorted(set(langs) - registry.supported_extensions())
         if unsupported:
             parser.error(
                 "unsupported languages: "
                 + ", ".join(unsupported)
                 + "; supported: "
-                + ", ".join(sorted(parsers.keys()))
+                + ", ".join(sorted(registry.supported_extensions()))
             )
     if args.emit == "code-units" and args.format != "json":
         parser.error("--emit code-units only supports --format json")
     to_stdout = args.stdout or (args.output and Path(args.output).as_posix() == "/dev/stdout")
 
-    conf = AnalysisConf(
-        repo_path=Path(args.repo_path).resolve(),
+    request = AnalysisRequest(
+        repo_root=Path(args.repo_path).resolve(),
         include_tests=args.include_tests,
-        output=None if to_stdout else Path(args.output) if args.output else None,
+        supported_languages=langs,
+        projection="code_units" if args.emit == "code-units" else "ast",
+        format=args.format,
         flatten_kind=args.flatten,
-        output_format=args.format,
-        to_stdout=to_stdout,
-        emit_kind=args.emit,
-        languages=langs,
+        output_target=OutputTarget(
+            to_stdout=to_stdout,
+            path=None if to_stdout else Path(args.output) if args.output else None,
+        ),
         log_level=args.log_level,
         fail_fast=args.fail_fast,
     )
 
-    log.info("starting run", repo=str(conf.repo_path), format=conf.output_format)
+    log.info("starting run", repo=str(request.repo_root), format=request.format)
 
     try:
-        return CodeRepoAnalysisService(
-            collector=SimpleCollector(),
-            pipeline=SimplePipeline(parsers=parsers, processors={}),
-            publisher=(
-                CodeUnitsPublisher() if conf.emit_kind == "code-units" else SimplePublisher()
-            ),
-        ).run(runtime_conf=conf)
-    except (FileNotFoundError, NotADirectoryError, PermissionError) as exc:
+        result = AnalyzeRepo(
+            collector=DefaultCollector(),
+            loader=DefaultLoader(),
+            parser_registry=registry,
+            ast_projector=AstProjector(),
+            code_units_projector=CodeUnitsProjector(),
+            writer=ArtifactWriter(),
+        ).run(request)
+        if result.stopped_early and result.stats.failed_files > 0:
+            first_failure = next(
+                parsed_file.failure.message
+                for parsed_file in result.parsed_files
+                if parsed_file.failure is not None
+            )
+            log.error("aborting — fail-fast", first_error=first_failure)
+        for parsed_file in result.parsed_files:
+            if parsed_file.failure is not None:
+                log.error(
+                    "parse error", path=parsed_file.relative_path, error=parsed_file.failure.message
+                )
+        return exit_code_for_result(result)
+    except InvalidRepoError as exc:
         log.error("invalid repository path", error=str(exc))
         return 3
     except Exception as exc:
