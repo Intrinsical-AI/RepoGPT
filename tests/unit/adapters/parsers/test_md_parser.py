@@ -1,21 +1,29 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
-from repogpt.adapters.parser.md_parser import MarkdownParser
-from repogpt.models import CodeNode, ParserInput
+from repogpt.adapters.parsers.md_parser import MarkdownParser
+from repogpt.domain.files import CollectedFile, FileDigest, LoadedFile
+from repogpt.domain.nodes import CodeNode
 from repogpt.utils.tree_utils import flatten_tree
 
 DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 
 
-def _parse(filename: str) -> CodeNode:
-    return MarkdownParser().parse(
-        ParserInput(
-            file_path=DATA_DIR / filename,
-            file_info={"relative_path": filename},
-        )
+def _loaded_file(filename: str) -> LoadedFile:
+    path = DATA_DIR / filename
+    raw = path.read_bytes()
+    return LoadedFile(
+        collected_file=CollectedFile(abs_path=path, relative_path=filename, language="md"),
+        raw_bytes=raw,
+        text=raw.decode("utf-8", errors="replace"),
+        digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
     )
+
+
+def _parse(filename: str) -> CodeNode:
+    return MarkdownParser().parse(_loaded_file(filename))
 
 
 def test_basic_markdown_builds_heading_tree() -> None:
@@ -64,13 +72,21 @@ def test_markdown_ids_are_deterministic() -> None:
 
 def test_markdown_unclosed_code_block_extends_to_eof(tmp_path: Path) -> None:
     fixture = tmp_path / "unclosed.md"
-    fixture.write_text(
-        "# Demo\n```python\nprint('ok')\n",
-        encoding="utf-8",
-    )
+    content = "# Demo\n```python\nprint('ok')\n"
+    fixture.write_text(content, encoding="utf-8")
+    raw = content.encode("utf-8")
 
     root = MarkdownParser().parse(
-        ParserInput(file_path=fixture, file_info={"relative_path": "unclosed.md"})
+        LoadedFile(
+            collected_file=CollectedFile(
+                abs_path=fixture,
+                relative_path="unclosed.md",
+                language="md",
+            ),
+            raw_bytes=raw,
+            text=content,
+            digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
+        )
     )
 
     heading = root.children[0]
@@ -86,13 +102,21 @@ def test_markdown_unclosed_code_block_extends_to_eof(tmp_path: Path) -> None:
 
 def test_markdown_skips_headings_and_links_inside_code_fences(tmp_path: Path) -> None:
     fixture = tmp_path / "fenced.md"
-    fixture.write_text(
-        "# Demo\n```python\n# Not a heading\n[click](https://example.com)\n```\n",
-        encoding="utf-8",
-    )
+    content = "# Demo\n```python\n# Not a heading\n[click](https://example.com)\n```\n"
+    fixture.write_text(content, encoding="utf-8")
+    raw = content.encode("utf-8")
 
     root = MarkdownParser().parse(
-        ParserInput(file_path=fixture, file_info={"relative_path": "fenced.md"})
+        LoadedFile(
+            collected_file=CollectedFile(
+                abs_path=fixture,
+                relative_path="fenced.md",
+                language="md",
+            ),
+            raw_bytes=raw,
+            text=content,
+            digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
+        )
     )
     nodes = flatten_tree(root)
 
@@ -102,22 +126,23 @@ def test_markdown_skips_headings_and_links_inside_code_fences(tmp_path: Path) ->
     assert root.metrics["link_count"] == 0
 
 
-# ── EDGE-1: vallas de tilde ───────────────────────────────────────────────────
-
-
 def test_markdown_tilde_fence_is_recognized_as_code_block(tmp_path: Path) -> None:
     fixture = tmp_path / "tilde.md"
-    fixture.write_text(
-        "# Demo\n~~~python\nprint(1)\n~~~\n",
-        encoding="utf-8",
-    )
+    content = "# Demo\n~~~python\nprint(1)\n~~~\n"
+    fixture.write_text(content, encoding="utf-8")
+    raw = content.encode("utf-8")
 
     root = MarkdownParser().parse(
-        ParserInput(file_path=fixture, file_info={"relative_path": "tilde.md"})
+        LoadedFile(
+            collected_file=CollectedFile(abs_path=fixture, relative_path="tilde.md", language="md"),
+            raw_bytes=raw,
+            text=content,
+            digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
+        )
     )
     nodes = flatten_tree(root)
 
-    code_blocks = [n for n in nodes if n["type"] == "code_block"]
+    code_blocks = [node for node in nodes if node["type"] == "code_block"]
     assert len(code_blocks) == 1
     assert code_blocks[0]["attributes"]["fence_language"] == "python"
     assert code_blocks[0]["start_line"] == 2
@@ -125,41 +150,43 @@ def test_markdown_tilde_fence_is_recognized_as_code_block(tmp_path: Path) -> Non
 
 
 def test_markdown_tilde_fence_not_closed_by_backtick_fence(tmp_path: Path) -> None:
-    # Un bloque abierto con ~~~ no debe cerrarse con ```.
-    # La línea ``` queda dentro del bloque y el bloque se marca como unclosed.
     fixture = tmp_path / "mixed.md"
-    fixture.write_text(
-        "~~~python\nprint(1)\n```\nprint(2)\n",
-        encoding="utf-8",
-    )
+    content = "~~~python\nprint(1)\n```\nprint(2)\n"
+    fixture.write_text(content, encoding="utf-8")
+    raw = content.encode("utf-8")
 
     root = MarkdownParser().parse(
-        ParserInput(file_path=fixture, file_info={"relative_path": "mixed.md"})
+        LoadedFile(
+            collected_file=CollectedFile(abs_path=fixture, relative_path="mixed.md", language="md"),
+            raw_bytes=raw,
+            text=content,
+            digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
+        )
     )
     nodes = flatten_tree(root)
 
-    code_blocks = [n for n in nodes if n["type"] == "code_block"]
+    code_blocks = [node for node in nodes if node["type"] == "code_block"]
     assert len(code_blocks) == 1
     assert code_blocks[0]["attributes"].get("is_unclosed") is True
-    assert code_blocks[0]["end_line"] == 4  # se extiende hasta el EOF
-
-
-# ── EDGE-2: info strings con espacio ─────────────────────────────────────────
+    assert code_blocks[0]["end_line"] == 4
 
 
 def test_markdown_fence_info_string_with_space_uses_first_token(tmp_path: Path) -> None:
-    # ```python {.class} → fence_language debe ser "python", no None ni la cadena completa.
     fixture = tmp_path / "info.md"
-    fixture.write_text(
-        "```python {.class}\ncode here\n```\n",
-        encoding="utf-8",
-    )
+    content = "```python {.class}\ncode here\n```\n"
+    fixture.write_text(content, encoding="utf-8")
+    raw = content.encode("utf-8")
 
     root = MarkdownParser().parse(
-        ParserInput(file_path=fixture, file_info={"relative_path": "info.md"})
+        LoadedFile(
+            collected_file=CollectedFile(abs_path=fixture, relative_path="info.md", language="md"),
+            raw_bytes=raw,
+            text=content,
+            digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
+        )
     )
     nodes = flatten_tree(root)
 
-    code_blocks = [n for n in nodes if n["type"] == "code_block"]
+    code_blocks = [node for node in nodes if node["type"] == "code_block"]
     assert len(code_blocks) == 1
     assert code_blocks[0]["attributes"]["fence_language"] == "python"

@@ -79,6 +79,10 @@ def test_cli_rejects_unsupported_language() -> None:
 def test_cli_fail_fast_returns_exit_code_1() -> None:
     proc = _run(["--fail-fast", "--stdout", "--include-tests"])
     assert proc.returncode == 1
+    payload = json.loads(proc.stdout)
+    assert payload["stats"]["total_files"] == 1
+    assert payload["stats"]["failed_files"] == 1
+    assert payload["failures"][0]["path"] == "bad.py"
     assert "aborting — fail-fast" in proc.stderr
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from repogpt.models import CodeNode
+from repogpt.domain.nodes import CodeNode
 from repogpt.utils.tree_utils import flatten_tree, iter_nodes
 
 
