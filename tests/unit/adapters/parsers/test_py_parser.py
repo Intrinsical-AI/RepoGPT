@@ -1,21 +1,29 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
-from repogpt.adapters.parser.py_parser import PythonParser
-from repogpt.models import CodeNode, ParserInput
+from repogpt.adapters.parsers.py_parser import PythonParser
+from repogpt.domain.files import CollectedFile, FileDigest, LoadedFile
+from repogpt.domain.nodes import CodeNode
 from repogpt.utils.tree_utils import all_comments, flatten_tree
 
 DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 
 
-def _parse(filename: str) -> CodeNode:
-    return PythonParser().parse(
-        ParserInput(
-            file_path=DATA_DIR / filename,
-            file_info={"relative_path": filename},
-        )
+def _loaded_file(filename: str) -> LoadedFile:
+    path = DATA_DIR / filename
+    raw = path.read_bytes()
+    return LoadedFile(
+        collected_file=CollectedFile(abs_path=path, relative_path=filename, language="py"),
+        raw_bytes=raw,
+        text=raw.decode("utf-8", errors="replace"),
+        digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
     )
+
+
+def _parse(filename: str) -> CodeNode:
+    return PythonParser().parse(_loaded_file(filename))
 
 
 def test_basic_py_structure_is_stable_and_lowercase() -> None:
@@ -53,18 +61,27 @@ def test_comments_are_attached_to_smallest_python_node() -> None:
 
 
 def test_python_import_and_signature_semantics(tmp_path: Path) -> None:
-    parser = PythonParser()
     fixture = tmp_path / "tmp_imports.py"
-    fixture.write_text(
+    content = (
         "import os as operating_system\n"
         "from pkg.sub import name as alias\n"
         "@decorator\n"
         "async def foo(a: int, /, b='x', *, c: str = 'y', **kwargs) -> str:\n"
-        "    return 'ok'\n",
-        encoding="utf-8",
+        "    return 'ok'\n"
     )
-    root = parser.parse(
-        ParserInput(file_path=fixture, file_info={"relative_path": "tmp_imports.py"})
+    fixture.write_text(content, encoding="utf-8")
+    raw = content.encode("utf-8")
+    root = PythonParser().parse(
+        LoadedFile(
+            collected_file=CollectedFile(
+                abs_path=fixture,
+                relative_path="tmp_imports.py",
+                language="py",
+            ),
+            raw_bytes=raw,
+            text=content,
+            digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
+        )
     )
 
     imports = [child for child in root.children if child.type == "import"]
@@ -91,14 +108,21 @@ def test_python_ids_are_deterministic() -> None:
 
 
 def test_python_signature_with_vararg_and_keyword_only_is_valid(tmp_path: Path) -> None:
-    parser = PythonParser()
     fixture = tmp_path / "tmp_signature.py"
-    fixture.write_text(
-        "def foo(*args, kw: int, **kwargs) -> None:\n    return None\n",
-        encoding="utf-8",
-    )
-    root = parser.parse(
-        ParserInput(file_path=fixture, file_info={"relative_path": "tmp_signature.py"})
+    content = "def foo(*args, kw: int, **kwargs) -> None:\n    return None\n"
+    fixture.write_text(content, encoding="utf-8")
+    raw = content.encode("utf-8")
+    root = PythonParser().parse(
+        LoadedFile(
+            collected_file=CollectedFile(
+                abs_path=fixture,
+                relative_path="tmp_signature.py",
+                language="py",
+            ),
+            raw_bytes=raw,
+            text=content,
+            digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
+        )
     )
 
     function = next(child for child in root.children if child.type == "function")
@@ -118,21 +142,27 @@ def test_python_metrics_and_unicode_comments() -> None:
 
 def test_python_module_end_line_handles_trailing_newline(tmp_path: Path) -> None:
     fixture = tmp_path / "trailing.py"
-    fixture.write_text("line1\nline2\n", encoding="utf-8")
+    content = "line1\nline2\n"
+    fixture.write_text(content, encoding="utf-8")
+    raw = content.encode("utf-8")
 
     root = PythonParser().parse(
-        ParserInput(file_path=fixture, file_info={"relative_path": "trailing.py"})
+        LoadedFile(
+            collected_file=CollectedFile(
+                abs_path=fixture,
+                relative_path="trailing.py",
+                language="py",
+            ),
+            raw_bytes=raw,
+            text=content,
+            digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
+        )
     )
 
     assert root.end_line == 2
 
 
-# ── COMP-2: _associate_comments iterativo ────────────────────────────────────
-
-
 def test_associate_comments_does_not_raise_on_deep_tree() -> None:
-    # Árbol 1500 niveles de profundidad: la versión recursiva original lanzaría
-    # RecursionError; la iterativa debe completarse sin error.
     parser = PythonParser()
     depth = 1500
     root = CodeNode(
@@ -145,29 +175,27 @@ def test_associate_comments_does_not_raise_on_deep_tree() -> None:
         end_line=depth,
     )
     current = root
-    for i in range(1, depth):
+    for index in range(1, depth):
         child = CodeNode(
-            id=f"node-{i}",
+            id=f"node-{index}",
             type="function",
-            name=f"f{i}",
+            name=f"f{index}",
             language="py",
             path="root.py",
-            start_line=i,
-            end_line=i,
+            start_line=index,
+            end_line=index,
             parent_id=current.id,
         )
         current.children.append(child)
         current = child
 
-    comment = {"text": "deep comment", "line": depth // 2}
-    parser._associate_comments(root, [comment])  # no debe lanzar RecursionError
+    parser._associate_comments(root, [{"text": "deep comment", "line": depth // 2}])
 
-    all_c = all_comments(root)
-    assert any(c["text"] == "deep comment" for c in all_c)
+    comments = all_comments(root)
+    assert any(comment["text"] == "deep comment" for comment in comments)
 
 
 def test_associate_comments_attaches_to_deepest_containing_node() -> None:
-    # Verifica la semántica: el comentario va al nodo más específico que lo contiene.
     parser = PythonParser()
     inner = CodeNode(
         id="inner",

@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from typing import Any
 
-from repogpt.models import CodeNode
+from repogpt.domain.nodes import CodeNode
 
 
 def _node_to_dict(node: CodeNode) -> dict[str, Any]:
