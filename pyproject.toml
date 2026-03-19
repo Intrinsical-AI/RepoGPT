@@ -8,10 +8,10 @@ keywords           = ["code-analysis", "LLM-integration", "RAG", "code-intellige
 license            = { file = "LICENSE" }
 
 authors = [
-  { name = "MrCabss69", email = "p.p.cabezon@proton.me" },
+  { name = "Intrinsical-AI", email = "p.p.cabezon@proton.me" },
 ]
 maintainers = [
-  { name = "MrCabss69", email = "p.p.cabezon@proton.me" },
+  { name = "Intrinsical-AI", email = "p.p.cabezon@proton.me" },
 ]
 
 classifiers = [
@@ -44,10 +44,10 @@ dev = [
 
 
 [project.urls]
-"Homepage"      = "https://github.com/MrCabss69/RepoGPT"
-"Repository"    = "https://github.com/MrCabss69/RepoGPT"
-"Bug Tracker"   = "https://github.com/MrCabss69/RepoGPT/issues"
-"Documentation" = "https://github.com/MrCabss69/RepoGPT#readme"
+"Homepage"      = "https://github.com/Intrinsical-AI/RepoGPT"
+"Repository"    = "https://github.com/Intrinsical-AI/RepoGPT"
+"Bug Tracker"   = "https://github.com/Intrinsical-AI/RepoGPT/issues"
+"Documentation" = "https://github.com/Intrinsical-AI/RepoGPT#readme"
 
 [project.scripts]
 repogpt = "repogpt.app.cli:main"
