@@ -141,7 +141,7 @@ def test_cli_code_units_matches_golden_fixture() -> None:
     )
     assert proc.returncode == 2
     payload = _normalize_code_units_payload(json.loads(proc.stdout), CLI_FIXTURE)
-    assert payload["schema_version"] == "3"
+    assert payload["schema_version"] == "4"
     expected = json.loads((GOLDEN_ROOT / "cli_fixture_code_units.json").read_text(encoding="utf-8"))
     assert payload == expected
 
@@ -155,7 +155,7 @@ def test_cli_code_units_documents_are_consumable_without_metadata() -> None:
     payload = json.loads(proc.stdout)
     document = payload["documents"][0]
 
-    assert payload["schema_version"] == "3"
+    assert payload["schema_version"] == "4"
     assert payload["replace_scope"] is True
     assert {
         "external_id",
@@ -166,21 +166,35 @@ def test_cli_code_units_documents_are_consumable_without_metadata() -> None:
         "path",
         "language",
         "unit_type",
+        "unit_level",
         "symbol",
+        "qualified_name",
+        "container_id",
+        "depth",
+        "ancestor_path",
         "start_line",
         "end_line",
         "content",
         "content_hash",
+        "docstring_present",
+        "has_children",
         "metadata",
     }.issubset(document.keys())
     assert document["metadata"]["repo_key"] == document["repo_key"]
     assert document["metadata"]["path"] == document["path"]
     assert document["metadata"]["language"] == document["language"]
     assert document["metadata"]["unit_type"] == document["unit_type"]
+    assert document["metadata"]["unit_level"] == document["unit_level"]
     assert document["metadata"]["symbol"] == document["symbol"]
+    assert document["metadata"]["qualified_name"] == document["qualified_name"]
+    assert document["metadata"]["container_id"] == document["container_id"]
+    assert document["metadata"]["depth"] == document["depth"]
+    assert document["metadata"]["ancestor_path"] == document["ancestor_path"]
     assert document["metadata"]["start_line"] == document["start_line"]
     assert document["metadata"]["end_line"] == document["end_line"]
     assert document["metadata"]["content_hash"] == document["content_hash"]
+    assert document["metadata"]["docstring_present"] == document["docstring_present"]
+    assert document["metadata"]["has_children"] == document["has_children"]
 
 
 def test_cli_ndjson_matches_golden_fixture() -> None:

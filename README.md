@@ -1,6 +1,7 @@
 # RepoGPT
 
 > **Abstraction, summarization and code intelligence — built for both humans and LLMs**
+> **Status:** RepoGPT already exposes a structured intermediate representation capable of supporting hierarchical and multi-granular retrieval. However, the RAG-oriented projection (`code-units`) flattens much of that hierarchy into plain code units, so the current benchmark mainly evaluates unit segmentation quality rather than true hierarchical retrieval behavior.
 
 RepoGPT turns a source-tree into a *consultable abstraction layer*:  
 structured, queryable and ready for downstream indexing or RAG pipelines.
@@ -8,17 +9,23 @@ structured, queryable and ready for downstream indexing or RAG pipelines.
 ```
 
 [Collector] → [Parser] → [Processor] → [Publisher]
-   |            |              |             |
-paths      CodeNode-trees  optional     JSON / NDJSON / stdout
+    |            |            |             |
+  paths    CodeNode-trees   optional     JSON / NDJSON / stdout
 
 ```
 
-* **Languages** – Python (`.py`) & Markdown (`.md`) only in v1.
+* **Languages** – Python (`.py`) and Markdown (`.md`) only in v1.
 * **Outputs** – hierarchical or flat, envelope `JSON` or streaming `NDJSON`.
 * **Logging** – powered by `structlog`; fully STDOUT-safe.
 * **Fail-fast** – abort immediately on the first parser error if you need strict runs.
-* **Ignore rules** – `.repogptignore` (git-wildmatch) + sensible defaults (`.git`, `node_modules`, …).
+* **Ignore rules** – `.repogptignore` (git-wildmatch) plus sensible defaults (`.git`, `node_modules`, …).
 * **Markdown fences** – both backtick (`` ``` ``) and tilde (`~~~`) delimiters; multi-word info strings (```` ```python console ````) use the first token as the language.
+
+Architecture and contracts:
+
+* structural IR and projections are treated as separate contracts
+* `code-units` v4 adds minimal hierarchy metadata for light structured retrieval
+* architecture, Phase 1 interoperability, and roadmap are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ---
 
@@ -44,29 +51,29 @@ pip install -e ".[dev]"
 
 ---
 
-## Desarrollo y Calidad de Código
+## Development and Code Quality
 
-Este proyecto utiliza [pre-commit](https://pre-commit.com) para asegurar calidad automática:
+This project uses [pre-commit](https://pre-commit.com) to enforce automated quality checks:
 
-- **Linting y autoformato** (`black`, `ruff`)
-- **Chequeo de tipado** (`mypy`)
-- **Tests y checks reproducibles** (`pytest -q`, `ruff`, `mypy`)
+- **Linting and auto-formatting** (`black`, `ruff`)
+- **Type checking** (`mypy`)
+- **Reproducible tests and checks** (`pytest -q`, `ruff`, `mypy`)
 
-**¿Cómo contribuyo de forma segura?**
+**How do I contribute safely?**
 
-1. Instala pre-commit (una vez):
+1. Install pre-commit once:
     ```
     pip install pre-commit
     pre-commit install
     ```
 
-2. Antes de commitear, ejecuta todos los checks:
+2. Before committing, run all checks:
     ```
     pre-commit run --all-files
     ```
 
-> Si algún check falla, **arregla el código antes de push/PR**.  
-> El pipeline de CI es igual de estricto.
+> If any check fails, **fix the code before pushing or opening a PR**.  
+> The CI pipeline is equally strict.
 
 
 ---
@@ -82,6 +89,9 @@ repogpt path-to-project/ --flatten node --format ndjson --stdout | jq 'select(.r
 
 # code-units projection for native RAG ingestion
 repogpt path-to-project/ --emit code-units --format json --stdout
+
+# compare the two Phase 1 retrieval profiles on a `code-units` artifact
+python benchmark_retrieval_profiles.py code_units.json "helper"
 
 ```
 
@@ -164,7 +174,7 @@ docs/build/
 
 ```json
 {
-  "schema_version": "3",
+  "schema_version": "4",
   "kind": "code-units",
   "repo_key": "my-repo",
   "snapshot_id": "my-repo-4f1f0c9b8d1a2e3f",
@@ -182,20 +192,34 @@ docs/build/
       "path": "src/app.py",
       "language": "py",
       "unit_type": "function",
+      "unit_level": "symbol",
       "symbol": "helper",
+      "qualified_name": "helper",
+      "container_id": "repogpt:my-repo:src/app.py:module",
+      "depth": 1,
+      "ancestor_path": ["src/app.py"],
       "start_line": 1,
       "end_line": 2,
       "content": "def helper():\n    return 1\n",
       "content_hash": "f9f4c6f5d2b8d7c89d8f6d1e8c5dbe4f6f8ed0bdb0d85c6d7d064c93f8b5f4c9",
+      "docstring_present": false,
+      "has_children": false,
       "metadata": {
         "repo_key": "my-repo",
         "path": "src/app.py",
         "language": "py",
         "unit_type": "function",
+        "unit_level": "symbol",
         "symbol": "helper",
+        "qualified_name": "helper",
+        "container_id": "repogpt:my-repo:src/app.py:module",
+        "depth": 1,
+        "ancestor_path": ["src/app.py"],
         "start_line": 1,
         "end_line": 2,
         "content_hash": "f9f4c6f5d2b8d7c89d8f6d1e8c5dbe4f6f8ed0bdb0d85c6d7d064c93f8b5f4c9",
+        "docstring_present": false,
+        "has_children": false,
         "file": { "sha256": "...", "size": 42 },
         "tags": [],
         "attributes": {},
@@ -206,13 +230,14 @@ docs/build/
 }
 ```
 
-`--emit code-units` uses a dedicated public contract in schema `3`:
+`--emit code-units` uses a dedicated public contract in schema `4`:
 
 * `external_id` is semantic and stable per unit, not derived from the internal AST `node.id`.
 * `content_hash` is `sha256(content)` for the exact emitted span and is the per-document change signal.
 * `snapshot_id` remains a repo-snapshot marker based on file hashes; it is provenance, not a per-document delta key.
 * `replace_scope: true` is emitted so canonical importers can do scope sync without extra wiring.
-* Canonical fields such as `path`, `language`, `unit_type`, `symbol`, `start_line` and `end_line` live at the top level of each document and are duplicated in `metadata` for generic downstream filtering/import flows.
+* Canonical fields such as `path`, `language`, `unit_type`, `unit_level`, `symbol`, `qualified_name`, `container_id`, `depth`, `ancestor_path`, `start_line` and `end_line` live at the top level of each document and are duplicated in `metadata` for generic downstream filtering/import flows.
+* Hierarchy metadata is intentionally minimal: enough for light runtime expansion, not a full relation graph in every document.
 
 ---
 
@@ -267,7 +292,7 @@ src/repogpt/
 
 1. Create `src/repogpt/adapters/parser/<lang>_parser.py` implementing `parse() -> CodeNode`.
 2. Register it in `adapters/parser/__init__.py`.
-3. Add docs, tests y un contrato explícito antes de anunciarlo.
+3. Add docs, tests, and an explicit contract before announcing it.
 
 ---
 
@@ -298,7 +323,7 @@ The suite exercises:
 
 ## Design notes
 
-- [docs/IDEA.md](docs/IDEA.md) — schema contract rationale, frozen guarantees, immediate goals.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — architecture, contracts, invariants, and roadmap.
 - [docs/CHALLENGES.md](docs/CHALLENGES.md) — open design questions, roadmap trade-offs, known limitations.
 
 ---
