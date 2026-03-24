@@ -101,17 +101,19 @@ python benchmark_retrieval_profiles.py code_units.json "helper"
 
 | Flag                       | Default         | Description                                                                                                                     |
 | -------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `--emit {ast,code-units}`  | `ast`           | `ast`: structured tree export.<br>`code-units`: JSON envelope for retrieval/indexing (`Py + Md`, high-signal units only).     |
-| `--flatten {node,file}`    | `node`          | *node*: every node appears as an output record.<br>*file*: only the root node per file is emitted.                               |
-| `--format {json,ndjson}`   | `json`          | *json*: envelope with `stats`, `failures` and `records`.<br>*ndjson*: stream of `node`, `failure` and `summary` records.        |
+| `--emit {ast,code-units}`  | `ast`           | `ast`: structural tree export in JSON or NDJSON.<br>`code-units`: retrieval projection in JSON only (`Py + Md`, schema `4`).   |
+| `--flatten {node,file}`    | `node`          | AST only. `node`: every node appears as an output record.<br>`file`: only the root node per file is emitted.                     |
+| `--format {json,ndjson}`   | `json`          | AST only. `json`: envelope with `stats`, `failures` and `records`.<br>`ndjson`: stream of `node`, `failure` and `summary`.      |
 | `--stdout`                 | -               | Stream to STDOUT instead of file.<br>Passing `-o /dev/stdout` has the same effect.                                              |
-| `-o, --output PATH`        | `analysis.json` | Destination file (ignored if `--stdout`).                                                                                       |
+| `-o, --output PATH`        | depends on emit | Destination file.<br>Defaults to `analysis.json` for AST and `code_units.json` for `code-units` if omitted.                    |
 | `--languages "py,md"`      | all parsers     | Comma-separated, case-insensitive whitelist of supported languages.                                                             |
 | `--include-tests`          | *off*           | Do **not** skip `tests/` directories, `test_*.py`, or `test-*.py` files.                                                       |
 | `--log-level {INFO,DEBUG}` | `INFO`          | Structured logs to STDERR.                                                                                                      |
 | `--fail-fast`              | *off*           | Abort on the first parser error (exit 1).                                                                                       |
 
 `--emit code-units` only supports `--format json`.
+
+AST JSON uses `records`; `code-units` JSON uses `documents`.
 
 ### Exit codes
 
@@ -238,6 +240,7 @@ docs/build/
 * `replace_scope: true` is emitted so canonical importers can do scope sync without extra wiring.
 * Canonical fields such as `path`, `language`, `unit_type`, `unit_level`, `symbol`, `qualified_name`, `container_id`, `depth`, `ancestor_path`, `start_line` and `end_line` live at the top level of each document and are duplicated in `metadata` for generic downstream filtering/import flows.
 * Hierarchy metadata is intentionally minimal: enough for light runtime expansion, not a full relation graph in every document.
+* If a file has no selected symbol/container units for its language, the projector falls back to emitting the root module document so the file still contributes a seedable unit.
 
 ---
 
@@ -251,9 +254,14 @@ RepoGPT never mixes **data** and **logs**:
 Examples:
 
 ```text
-2025-05-17 18:12:07 [info ] starting run          format=ndjson repo=/path/to/repo
-2025-05-17 18:12:07 [debug] skip                  path=tests/foo.py reason=ignored
-2025-05-17 18:12:08 [error] aborting — fail-fast  first_error="SyntaxError: invalid syntax"
+2026-03-24 02:45:04 [info     ] starting run                   format=json repo=/abs/path/to/repo
+2026-03-24 02:45:04 [error    ] parse error                    path=bad.py error='File "/abs/path/to/repo/bad.py", line 1
+
+    def broken(:
+
+               ^
+
+SyntaxError: invalid syntax'
 ```
 
 Capture with `pytest`’s `caplog`, or redirect STDERR to a file in CI.
@@ -270,7 +278,6 @@ Available `make` targets:
 | `make type` | `mypy src tests` | Type check |
 | `make test` | `pytest -q` | Run tests |
 | `make clean` | — | Remove `__pycache__`, `.pytest_cache`, `.pyc` |
-| `make repogpt` | `python -m repogpt.app.cli` | Run CLI directly |
 
 Or run the raw commands directly without `make`.
 
@@ -279,20 +286,23 @@ Or run the raw commands directly without `make`.
 ```
 src/repogpt/
 ├── adapters/
-│   ├── collector/      # filesystem traversal & ignore logic
-│   ├── parser/         # language-specific parsers → CodeNode trees
-│   ├── pipeline/       # glue + processors
-│   └── publisher/      # JSON/NDJSON writer
-├── core/               # service + clean-architecture ports
-├── utils/              # file & text helpers
+│   ├── fs/             # filesystem traversal, ignore logic, file loading
+│   ├── parsers/        # language-specific parsers and parser registry
+│   ├── projectors/     # AST and code-units projections
+│   └── writers/        # artifact serialization
+├── application/        # use-case orchestration and exit codes
+├── domain/             # analysis, file, node, and error models
+├── ports/              # adapter interfaces
+├── utils/              # helper functions and retrieval profiles
 └── app/cli.py          # entry-point
 ```
 
 ### Extending to another language
 
-1. Create `src/repogpt/adapters/parser/<lang>_parser.py` implementing `parse() -> CodeNode`.
-2. Register it in `adapters/parser/__init__.py`.
-3. Add docs, tests, and an explicit contract before announcing it.
+1. Create `src/repogpt/adapters/parsers/<lang>_parser.py` implementing `parse() -> CodeNode`.
+2. Register it in `src/repogpt/adapters/parsers/registry.py`.
+3. Add parser tests under `tests/unit/adapters/parsers/` and refresh fixtures or golden payloads if the CLI contract changes.
+4. Update docs and the supported-language contract before announcing it.
 
 ---
 
@@ -307,7 +317,7 @@ The suite exercises:
 * Collect / ignore rules (including relative-path test detection and race-condition file disappearance)
 * Markdown & Python parsers (tilde fences, multi-word info strings, deep-tree recursion safety)
 * JSON/NDJSON contract v1
-* Code-units publisher (qualified symbol IDs, orphaned-node edge cases, byte-accurate file hashing)
+* Code-units publisher (qualified symbol IDs, module fallback, byte-accurate file hashing)
 * CLI exit codes and partial failures
 * Import-path isolation to ensure tests run against this checkout
 

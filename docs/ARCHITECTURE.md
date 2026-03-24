@@ -156,6 +156,7 @@ Contract notes:
 - `container_id` may reference a logical container that is not emitted as a standalone document in the same artifact.
 - `ancestor_path` is intended for lightweight structural filtering and bundling, not as a substitute for a full graph path model.
 - `external_id` remains the public semantic identifier for a projected document.
+- If a file yields no selected symbol or container units for its language, the projector falls back to the root module document so the file still contributes a seedable unit.
 
 ### 3.4 Mapping rules
 
@@ -250,8 +251,8 @@ Rule: the structural IR must not depend on any concrete parser or retrieval impl
 ### 6.3 Phase 1 benchmark flow
 
 1. generate a `code-units` artifact
-2. rank documents for a query
-3. assemble a `flat_rag_v1` bundle
+2. rank `code-units` documents for a query
+3. assemble a `flat_rag_v1` bundle from the ranked documents with no expansion
 4. assemble a `structured_rag_v1` bundle with at most one container hop per seed
 5. compare item sets and rough bundle size
 
@@ -271,13 +272,14 @@ In Phase 1, retrieval profiles are contract-level interoperability presets rathe
 
 #### `flat_rag_v1`
 
-- primary unit: `code-units` emitted with `unit_level = symbol`
+- primary input: ranked `code-units` documents
 - expansion: none
+- ranking: exact symbol matches get a stronger score, but the profile is not restricted to symbol-only documents
 - intent: baseline retrieval and reproducible comparison
 
 #### `structured_rag_v1`
 
-- primary unit: `code-units` emitted with `unit_level = symbol`
+- primary input: ranked `code-units` documents
 - expansion: at most one hop to the nearest enclosing container, subject to budget
 - default interpretation: container-aware expansion for top ranked seeds, then deduplicate
 - intent: light structured retrieval without requiring a graph engine
