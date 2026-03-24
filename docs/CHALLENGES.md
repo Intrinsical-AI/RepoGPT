@@ -1,65 +1,65 @@
-## **Aspectos a Considerar / Posibles Desafíos**
+## Key Considerations and Open Challenges
 
-* **Soporte de Lenguajes:**
-  En el corto plazo el foco es `Py + Md`. Cualquier lenguaje adicional sólo entra cuando tenga parser, tests y contrato de salida al mismo nivel de estabilidad.
+* **Language support:**
+  In the short term, the focus is `Py + Md`. Any additional language should only be added once it has a parser, tests, and an output contract at the same level of stability.
 
-* **Complejidad de Implementación de "Vistas" (Views/Projections):**
-  ¿Cuán sencillo será para un usuario definir una “vista” personalizada del código (por ejemplo: solo imports, solo clases, funciones + docstrings, etc)?
+* **Views / projections implementation complexity:**
+  How easy should it be for a user to define a custom code view, for example: imports only, classes only, functions plus docstrings, and so on?
 
-  * **Por código:** Gran flexibilidad, pero barrera de entrada para usuarios menos técnicos.
-  * **Por configuración/DSL:** Más accesible, pero requiere diseño y parsing adicional.
-  * *Decisión clave*: equilibrar flexibilidad con facilidad de uso.
+  * **Code-driven:** very flexible, but a higher barrier for less technical users.
+  * **Configuration / DSL-driven:** more accessible, but requires design work and extra parsing.
+  * *Key decision:* balance flexibility against ease of use.
 
-* **Rendimiento:**
-  Analizar grandes repositorios puede ser intensivo en tiempo y memoria, especialmente si se hacen múltiples pases (parseo, procesado, reporte). Será importante:
+* **Performance:**
+  Analyzing large repositories can be expensive in time and memory, especially when multiple passes are involved (parse, process, report). It will be important to:
 
-  * Optimizar recorridos de árbol,
-  * Cachear resultados intermedios,
-  * Ofrecer modos “rápido” vs. “completo”.
+  * optimize tree traversals,
+  * cache intermediate results,
+  * offer “fast” versus “complete” modes.
 
-* **Madurez y Calidad de los Parsers:**
-  Toda la calidad de la extracción depende de los parsers (AST, tokenización, heurística).
+* **Parser maturity and quality:**
+  Extraction quality depends heavily on the parsers (AST, tokenization, heuristics).
 
-  * Para Python hay soporte nativo en la stdlib. Markdown requiere heurística propia y golden tests para no degradar el árbol.
-  * El parser debe estar muy probado con “edge cases” reales (véase la carpeta de fixtures).
+  * Python has native support in the standard library. Markdown needs its own heuristics and golden tests to avoid degrading the tree.
+  * Parsers should be heavily exercised with real edge cases from the fixtures directory.
 
-* **Competencia / Alternativas:**
-  Existen herramientas avanzadas (ctags, tree-sitter, linters, análisis estático, docgenerators, IDEs) que cubren partes de este problema.
+* **Competition and alternatives:**
+  There are advanced tools such as ctags, tree-sitter, linters, static analysis, doc generators, and IDEs that already cover parts of this problem.
 
-  * **Diferenciación de RepoGPT:** la unificación de análisis, la salida estructurada y consultable, y el enfoque explícito en LLM/RAG y la extensibilidad.
+  * **RepoGPT differentiation:** unified analysis, structured and queryable output, explicit LLM/RAG orientation, and extensibility.
 
-* **Casos de Uso Potenciales (más allá de LLMs):**
+* **Potential use cases beyond LLMs:**
 
-  * Generación automática de documentación: esqueletos de API, resúmenes de módulos.
-  * Análisis de dependencias internas y externas.
-  * Detección de “code smells” o patrones a medida.
-  * Refactorización asistida: entender impactos, dependencias, puntos de entrada.
-  * Creación de mapas visuales, diagramas y métricas para arquitectos y devs.
+  * Automatic documentation generation: API skeletons, module summaries.
+  * Internal and external dependency analysis.
+  * Code smell detection or custom pattern detection.
+  * Assisted refactoring: understanding impact, dependencies, and entry points.
+  * Visual maps, diagrams, and metrics for architects and developers.
 
 
-## TODOs/Oportunidades de mejora
+## TODOs and Improvement Opportunities
 
-1. **Paralelización y caching**
+1. **Parallelization and caching**
 
-   * Integrar procesamiento paralelo (por fichero o por nodo)
-   * Cachear árboles sintácticos para repos con cambios incrementales
+   * Introduce parallel processing per file or per node.
+   * Cache syntax trees for repositories with incremental changes.
 
-2. **Implementar el “Reporter”**
+2. **Implement the reporter**
 
-   * Generación de gráficos de dependencia (por ejemplo, con Graphviz)
-   * Métricas de complejidad de código, tests cubiertos, ratio de comentarios
+   * Generate dependency graphs, for example with Graphviz.
+   * Add metrics for code complexity, test coverage, and comment ratio.
 
-3. **UI/UX interactivo**
+3. **Interactive UI / UX**
 
-   * Webapp ligera con vistas filtrables (imports, TODOs, docstrings)
-   * Integración con IDE sólo después de fijar el contrato del artefacto
+   * A lightweight web app with filterable views (imports, TODOs, docstrings).
+   * IDE integration only after the artifact contract is stabilized.
 
-4. **Estrategia de lanzamiento incremental**
+4. **Incremental release strategy**
 
-   * Consolidar `Py + Md` antes de abrir nuevos lenguajes
-   * Crear ejemplos de casos de uso concretos (RAG de código, auditorías, diffs estructurados)
+   * Consolidate `Py + Md` before opening up new languages.
+   * Create concrete use-case examples such as code RAG, audits, and structured diffs.
 
-5. **Ecosistema y colaboración**
+5. **Ecosystem and collaboration**
 
-   * Documentar claramente la API de adaptadores y procesadores
-   * Abrir extensibilidad real sólo cuando el esquema v1 haya demostrado estabilidad
+   * Document the adapter and processor APIs clearly.
+   * Open up real extensibility only once the v1 schema has proven stable.

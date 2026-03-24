@@ -53,11 +53,11 @@ def test_writer_writes_ndjson_to_stdout(tmp_path: Path, capsys: Any) -> None:
 def test_writer_defaults_code_units_filename(tmp_path: Path, monkeypatch: Any) -> None:
     monkeypatch.chdir(tmp_path)
     projection = CodeUnitsProjection(
-        schema_version="3",
-        json_payload={"schema_version": "3", "documents": [], "failures": [], "stats": {}},
+        schema_version="4",
+        json_payload={"schema_version": "4", "documents": [], "failures": [], "stats": {}},
     )
 
     ArtifactWriter().write(projection, AnalysisRequest(repo_root=tmp_path, projection="code_units"))
 
     payload = json.loads((tmp_path / "code_units.json").read_text(encoding="utf-8"))
-    assert payload["schema_version"] == "3"
+    assert payload["schema_version"] == "4"

@@ -11,8 +11,9 @@ from repogpt.domain.nodes import CodeNode
 from repogpt.ports.projectors import CodeUnitsProjectorPort
 from repogpt.utils.tree_utils import iter_nodes
 
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "4"
 KIND = "code-units"
+CONTAINER_TYPES = {"module", "class", "heading"}
 
 
 def _slugify(value: str) -> str:
@@ -62,20 +63,34 @@ def _queryable_metadata(
     path: str,
     language: str | None,
     unit_type: str,
+    unit_level: str,
     symbol: str | None,
+    qualified_name: str,
+    container_id: str,
+    depth: int,
+    ancestor_path: list[str],
     start_line: int | None,
     end_line: int | None,
     content_hash: str,
+    docstring_present: bool,
+    has_children: bool,
 ) -> dict[str, Any]:
     values = {
         "repo_key": repo_key,
         "path": path,
         "language": language,
         "unit_type": unit_type,
+        "unit_level": unit_level,
         "symbol": symbol,
+        "qualified_name": qualified_name,
+        "container_id": container_id,
+        "depth": depth,
+        "ancestor_path": ancestor_path,
         "start_line": start_line,
         "end_line": end_line,
         "content_hash": content_hash,
+        "docstring_present": docstring_present,
+        "has_children": has_children,
     }
     return {
         key: value
@@ -156,10 +171,16 @@ class CodeUnitsProjector(CodeUnitsProjectorPort):
             return []
         source_id = f"repogpt:{repo_key}:file:{parsed_file.relative_path}"
         lines = parsed_file.text.splitlines(keepends=True)
+        nodes = {node.id: node for node in iter_nodes(parsed_file.root)}
         external_ids = self._external_ids_for_selected(
             root=parsed_file.root,
             selected=selected,
             repo_key=repo_key,
+            relative_path=parsed_file.relative_path,
+        )
+        qualified_names = self._qualified_names_for_selected(
+            root=parsed_file.root,
+            selected=selected,
             relative_path=parsed_file.relative_path,
         )
         docs: list[dict[str, Any]] = []
@@ -171,6 +192,18 @@ class CodeUnitsProjector(CodeUnitsProjectorPort):
                 end_line=node.end_line,
             )
             content_hash = _content_hash(span_content)
+            unit_level = self._unit_level(node)
+            qualified_name = qualified_names[node.id]
+            container = self._container_node(node=node, nodes=nodes)
+            container_id = external_ids[container.id]
+            depth = self._depth(node=node, nodes=nodes)
+            ancestor_path = self._ancestor_path(
+                node=node,
+                nodes=nodes,
+                qualified_names=qualified_names,
+            )
+            docstring_present = bool(node.docstring and node.docstring.strip())
+            has_children = bool(node.children)
             docs.append(
                 {
                     "external_id": external_ids[node.id],
@@ -181,21 +214,35 @@ class CodeUnitsProjector(CodeUnitsProjectorPort):
                     "path": parsed_file.relative_path,
                     "language": node.language,
                     "unit_type": node.type,
+                    "unit_level": unit_level,
                     "symbol": node.name,
+                    "qualified_name": qualified_name,
+                    "container_id": container_id,
+                    "depth": depth,
+                    "ancestor_path": ancestor_path,
                     "start_line": node.start_line,
                     "end_line": node.end_line,
                     "content": span_content,
                     "content_hash": content_hash,
+                    "docstring_present": docstring_present,
+                    "has_children": has_children,
                     "metadata": {
                         **_queryable_metadata(
                             repo_key=repo_key,
                             path=parsed_file.relative_path,
                             language=node.language,
                             unit_type=node.type,
+                            unit_level=unit_level,
                             symbol=node.name,
+                            qualified_name=qualified_name,
+                            container_id=container_id,
+                            depth=depth,
+                            ancestor_path=ancestor_path,
                             start_line=node.start_line,
                             end_line=node.end_line,
                             content_hash=content_hash,
+                            docstring_present=docstring_present,
+                            has_children=has_children,
                         ),
                         "file": {
                             "sha256": parsed_file.digest.sha256,
@@ -246,6 +293,29 @@ class CodeUnitsProjector(CodeUnitsProjectorPort):
             for node in selected
         }
 
+    def _qualified_names_for_selected(
+        self,
+        *,
+        root: CodeNode,
+        selected: list[CodeNode],
+        relative_path: str,
+    ) -> dict[str, str]:
+        if root.language == "py":
+            return self._python_qualified_names(
+                root=root,
+                selected=selected,
+                relative_path=relative_path,
+            )
+        if root.language == "md":
+            return self._markdown_qualified_names(
+                root=root,
+                selected=selected,
+                relative_path=relative_path,
+            )
+        names = {node.id: node.name or relative_path for node in selected}
+        names[root.id] = relative_path
+        return names
+
     def _python_external_ids(
         self,
         *,
@@ -256,7 +326,9 @@ class CodeUnitsProjector(CodeUnitsProjectorPort):
     ) -> dict[str, str]:
         nodes = {node.id: node for node in iter_nodes(root)}
         selected_ids = {node.id for node in selected}
-        external_ids: dict[str, str] = {}
+        external_ids: dict[str, str] = {
+            root.id: _module_external_id(repo_key=repo_key, relative_path=relative_path)
+        }
         for node in selected:
             if node.type == "module":
                 external_ids[node.id] = _module_external_id(
@@ -283,6 +355,37 @@ class CodeUnitsProjector(CodeUnitsProjectorPort):
             )
         return external_ids
 
+    def _python_qualified_names(
+        self,
+        *,
+        root: CodeNode,
+        selected: list[CodeNode],
+        relative_path: str,
+    ) -> dict[str, str]:
+        nodes = {node.id: node for node in iter_nodes(root)}
+        qualified_names = {root.id: relative_path}
+        for node in selected:
+            if node.type == "module":
+                qualified_names[node.id] = relative_path
+                continue
+            symbol_parts: list[str] = []
+            current = node
+            while True:
+                if current.name and current.type in {"class", "function", "method"}:
+                    symbol_parts.append(current.name)
+                if current.parent_id is None:
+                    break
+                parent = nodes.get(current.parent_id)
+                if parent is None:
+                    break
+                current = parent
+                if current.type == "module":
+                    break
+            qualified_names[node.id] = (
+                _join_symbol_path(list(reversed(symbol_parts))) or relative_path
+            )
+        return qualified_names
+
     def _markdown_external_ids(
         self,
         *,
@@ -292,7 +395,9 @@ class CodeUnitsProjector(CodeUnitsProjectorPort):
         relative_path: str,
     ) -> dict[str, str]:
         selected_ids = {node.id for node in selected}
-        external_ids: dict[str, str] = {}
+        external_ids: dict[str, str] = {
+            root.id: _module_external_id(repo_key=repo_key, relative_path=relative_path)
+        }
         code_block_ordinals: dict[str, int] = {}
 
         def walk(
@@ -326,12 +431,95 @@ class CodeUnitsProjector(CodeUnitsProjectorPort):
                 walk(child, current_heading_path=next_heading_path)
 
         walk(root, current_heading_path=None)
-        if root.id in selected_ids and root.id not in external_ids:
-            external_ids[root.id] = _module_external_id(
-                repo_key=repo_key,
-                relative_path=relative_path,
-            )
         return external_ids
+
+    def _markdown_qualified_names(
+        self,
+        *,
+        root: CodeNode,
+        selected: list[CodeNode],
+        relative_path: str,
+    ) -> dict[str, str]:
+        selected_ids = {node.id for node in selected}
+        qualified_names: dict[str, str] = {root.id: relative_path}
+        code_block_ordinals: dict[str, int] = {}
+
+        def walk(
+            node: CodeNode,
+            *,
+            current_heading_path: str | None,
+        ) -> None:
+            heading_slug_counts: dict[str, int] = {}
+            for child in node.children:
+                next_heading_path = current_heading_path
+                if child.type == "heading":
+                    segment_base = _markdown_segment(child.name)
+                    heading_slug_counts[segment_base] = heading_slug_counts.get(segment_base, 0) + 1
+                    ordinal = heading_slug_counts[segment_base]
+                    segment = segment_base if ordinal == 1 else f"{segment_base}-{ordinal}"
+                    next_heading_path = (
+                        f"{current_heading_path}/{segment}" if current_heading_path else segment
+                    )
+                    if child.id in selected_ids:
+                        qualified_names[child.id] = next_heading_path
+                elif child.type == "code_block":
+                    section_path = current_heading_path or "root"
+                    code_block_ordinals[section_path] = code_block_ordinals.get(section_path, 0) + 1
+                    if child.id in selected_ids:
+                        qualified_names[child.id] = (
+                            f"{section_path}/code_block[{code_block_ordinals[section_path]}]"
+                        )
+                walk(child, current_heading_path=next_heading_path)
+
+        walk(root, current_heading_path=None)
+        return qualified_names
+
+    def _unit_level(self, node: CodeNode) -> str:
+        return "container" if node.type in CONTAINER_TYPES else "symbol"
+
+    def _container_node(self, *, node: CodeNode, nodes: dict[str, CodeNode]) -> CodeNode:
+        if node.type == "module":
+            return node
+        current = node
+        while current.parent_id is not None:
+            parent = nodes.get(current.parent_id)
+            if parent is None:
+                break
+            if parent.type in CONTAINER_TYPES:
+                return parent
+            current = parent
+        return node
+
+    def _depth(self, *, node: CodeNode, nodes: dict[str, CodeNode]) -> int:
+        depth = 0
+        current = node
+        while current.parent_id is not None:
+            parent = nodes.get(current.parent_id)
+            if parent is None:
+                break
+            depth += 1
+            current = parent
+        return depth
+
+    def _ancestor_path(
+        self,
+        *,
+        node: CodeNode,
+        nodes: dict[str, CodeNode],
+        qualified_names: dict[str, str],
+    ) -> list[str]:
+        ancestors: list[CodeNode] = []
+        current = node
+        while current.parent_id is not None:
+            parent = nodes.get(current.parent_id)
+            if parent is None:
+                break
+            ancestors.append(parent)
+            current = parent
+        ancestors.reverse()
+        return [
+            qualified_names[ancestor.id] for ancestor in ancestors if ancestor.id in qualified_names
+        ]
 
     def _failure_record(self, parsed_file: ParsedFile) -> dict[str, Any]:
         assert parsed_file.failure is not None

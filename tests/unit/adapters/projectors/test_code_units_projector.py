@@ -68,13 +68,24 @@ def test_code_units_projection_contains_documents(tmp_path: Path) -> None:
     projection = CodeUnitsProjector().project(result, AnalysisRequest(repo_root=tmp_path))
     payload = projection.json_payload
 
-    assert payload["schema_version"] == "3"
+    assert payload["schema_version"] == "4"
     assert payload["kind"] == "code-units"
     assert payload["replace_scope"] is True
     assert [doc["unit_type"] for doc in payload["documents"]] == ["class", "method", "function"]
     assert payload["documents"][1]["external_id"] == (
         f"repogpt:{tmp_path.name.lower()}:sample.py:method:Demo.method"
     )
+    assert payload["documents"][0]["unit_level"] == "container"
+    assert payload["documents"][0]["qualified_name"] == "Demo"
+    assert payload["documents"][0]["container_id"] == (
+        f"repogpt:{tmp_path.name.lower()}:sample.py:module"
+    )
+    assert payload["documents"][1]["unit_level"] == "symbol"
+    assert payload["documents"][1]["qualified_name"] == "Demo.method"
+    assert payload["documents"][1]["depth"] == 2
+    assert payload["documents"][1]["ancestor_path"] == ["sample.py", "Demo"]
+    assert payload["documents"][1]["docstring_present"] is False
+    assert payload["documents"][1]["has_children"] is False
 
 
 def test_code_units_projection_uses_loaded_file_snapshot(tmp_path: Path) -> None:
@@ -124,7 +135,7 @@ def test_code_units_projection_failure_records_include_record_type(tmp_path: Pat
     payload = CodeUnitsProjector().project(result, AnalysisRequest(repo_root=tmp_path)).json_payload
 
     assert payload["failures"][0]["record_type"] == "failure"
-    assert payload["failures"][0]["schema_version"] == "3"
+    assert payload["failures"][0]["schema_version"] == "4"
 
 
 def test_code_units_projection_markdown_falls_back_to_module(tmp_path: Path) -> None:
