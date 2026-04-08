@@ -51,6 +51,7 @@ dev = [
 
 [project.scripts]
 repogpt = "repogpt.app.cli:main"
+repogpt-mcp = "repogpt.mcp_server:main"
 
 [build-system]
 requires    = ["setuptools>=61.0", "wheel"]

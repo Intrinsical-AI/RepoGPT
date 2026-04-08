@@ -25,7 +25,7 @@ Architecture and contracts:
 
 * structural IR and projections are treated as separate contracts
 * `code-units` v4 adds minimal hierarchy metadata for light structured retrieval
-* architecture, Phase 1 interoperability, and roadmap are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+* architecture, Phase 1 integration, and roadmap are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 
 ---
 
@@ -241,6 +241,25 @@ docs/build/
 * Canonical fields such as `path`, `language`, `unit_type`, `unit_level`, `symbol`, `qualified_name`, `container_id`, `depth`, `ancestor_path`, `start_line` and `end_line` live at the top level of each document and are duplicated in `metadata` for generic downstream filtering/import flows.
 * Hierarchy metadata is intentionally minimal: enough for light runtime expansion, not a full relation graph in every document.
 * If a file has no selected symbol/container units for its language, the projector falls back to emitting the root module document so the file still contributes a seedable unit.
+
+---
+
+## MCP
+
+RepoGPT ships a compact MCP server for agent-facing artifact emission and profile comparison:
+
+```bash
+repogpt-mcp
+# or: python -m repogpt.mcp_server
+```
+
+Tools:
+
+* `repogpt_emit_code_units`
+* `repogpt_emit_ast`
+* `repogpt_compare_profiles`
+
+The MCP surface is intentionally thin: it wraps the existing CLI and profile comparison script, and it does not introduce a separate artifact contract.
 
 ---
 
