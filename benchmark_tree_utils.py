@@ -39,7 +39,7 @@ def benchmark_function(func: Callable[..., Any], *args: Any, iterations: int = 1
 
 if __name__ == "__main__":
     print("Building tree...")
-    # Depth 6, width 4 -> 1 + 4 + 16 + 64 + 256 + 1024 + 4096 = 5461 nodes
+    # Depth 6, width 4 -> 1 + 4 + 16 + 64 + 256 + 1024 + 4096
     root = build_tree(7, 3)
     num_nodes = len(iter_nodes(root))
     print(f"Tree built with {num_nodes} nodes.")

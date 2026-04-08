@@ -98,3 +98,29 @@ def assemble_structured_bundle(
         "estimated_tokens": _estimate_tokens(items),
         "items": items,
     }
+
+
+def compare_profiles(
+    documents: list[dict[str, Any]],
+    *,
+    query_text: str,
+    top_k: int = 3,
+) -> dict[str, Any]:
+    flat = assemble_flat_bundle(documents, query_text=query_text, top_k=top_k)
+    structured = assemble_structured_bundle(documents, query_text=query_text, top_k=top_k)
+    return {
+        "query_text": query_text,
+        "top_k": top_k,
+        "flat_rag_v1": {
+            "seed_count": flat["seed_count"],
+            "expanded_count": flat["expanded_count"],
+            "estimated_tokens": flat["estimated_tokens"],
+            "external_ids": [item["external_id"] for item in flat["items"]],
+        },
+        "structured_rag_v1": {
+            "seed_count": structured["seed_count"],
+            "expanded_count": structured["expanded_count"],
+            "estimated_tokens": structured["estimated_tokens"],
+            "external_ids": [item["external_id"] for item in structured["items"]],
+        },
+    }

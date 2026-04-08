@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from repogpt.utils.retrieval_profiles import assemble_flat_bundle, assemble_structured_bundle
+from repogpt.utils.retrieval_profiles import compare_profiles
 
 
 def _load_documents(path: Path) -> list[dict[str, Any]]:
@@ -26,29 +26,8 @@ def main() -> int:
     args = parser.parse_args()
 
     documents = _load_documents(Path(args.artifact))
-    flat = assemble_flat_bundle(documents, query_text=args.query, top_k=args.top_k)
-    structured = assemble_structured_bundle(documents, query_text=args.query, top_k=args.top_k)
-
     print(
-        json.dumps(
-            {
-                "query_text": args.query,
-                "top_k": args.top_k,
-                "flat_rag_v1": {
-                    "seed_count": flat["seed_count"],
-                    "expanded_count": flat["expanded_count"],
-                    "estimated_tokens": flat["estimated_tokens"],
-                    "external_ids": [item["external_id"] for item in flat["items"]],
-                },
-                "structured_rag_v1": {
-                    "seed_count": structured["seed_count"],
-                    "expanded_count": structured["expanded_count"],
-                    "estimated_tokens": structured["estimated_tokens"],
-                    "external_ids": [item["external_id"] for item in structured["items"]],
-                },
-            },
-            indent=2,
-        )
+        json.dumps(compare_profiles(documents, query_text=args.query, top_k=args.top_k), indent=2)
     )
     return 0
 

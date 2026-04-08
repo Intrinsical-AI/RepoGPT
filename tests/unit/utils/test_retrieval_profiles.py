@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from repogpt.utils.retrieval_profiles import (
+    compare_profiles,
     assemble_flat_bundle,
     assemble_structured_bundle,
     rank_documents,
@@ -62,6 +63,20 @@ def test_structured_bundle_adds_available_container_documents() -> None:
     assert bundle["seed_count"] == 1
     assert bundle["expanded_count"] == 1
     assert [item["external_id"] for item in bundle["items"]] == [
+        "repogpt:demo:sample.py:method:Demo.method",
+        "repogpt:demo:sample.py:class:Demo",
+    ]
+
+
+def test_compare_profiles_returns_both_profile_summaries() -> None:
+    comparison = compare_profiles(_documents(), query_text="method", top_k=1)
+
+    assert comparison["query_text"] == "method"
+    assert comparison["top_k"] == 1
+    assert comparison["flat_rag_v1"]["external_ids"] == [
+        "repogpt:demo:sample.py:method:Demo.method"
+    ]
+    assert comparison["structured_rag_v1"]["external_ids"] == [
         "repogpt:demo:sample.py:method:Demo.method",
         "repogpt:demo:sample.py:class:Demo",
     ]
