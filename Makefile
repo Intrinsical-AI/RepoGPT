@@ -1,13 +1,13 @@
 .PHONY: test lint type clean repogpt
 
 lint:
-	ruff check .
+	uv run ruff check .
 
 type:
-	mypy src tests
+	uv run mypy src tests
 
 test:
-	pytest -q
+	uv run pytest -q
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} +
@@ -15,4 +15,4 @@ clean:
 	find . -type f -name "*.pyc" -delete
 
 repogpt:
-	python -m repogpt.app.cli
+	uv run repogpt
