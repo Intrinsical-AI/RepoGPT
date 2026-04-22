@@ -41,7 +41,7 @@ def load_pathspec(repo_root: Path) -> pathspec.PathSpec | None:
                     line for line in handle if line.strip() and not line.strip().startswith("#")
                 ]
             return pathspec.PathSpec.from_lines("gitignore", lines)
-    except OSError:
+    except (OSError, ValueError, UnicodeError):
         logger.warning("failed to read repogptignore", path=str(ignore_file))
     return None
 

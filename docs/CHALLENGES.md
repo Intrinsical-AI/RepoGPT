@@ -1,65 +1,70 @@
-## Key Considerations and Open Challenges
+# Open Challenges and Design Questions
 
-* **Language support:**
-  In the short term, the focus is `Py + Md`. Any additional language should only be added once it has a parser, tests, and an output contract at the same level of stability.
+This document captures open questions and tradeoffs. It is not a committed roadmap.
 
-* **Views / projections implementation complexity:**
-  How easy should it be for a user to define a custom code view, for example: imports only, classes only, functions plus docstrings, and so on?
+## 1. Projection surface area
 
-  * **Code-driven:** very flexible, but a higher barrier for less technical users.
-  * **Configuration / DSL-driven:** more accessible, but requires design work and extra parsing.
-  * *Key decision:* balance flexibility against ease of use.
+RepoGPT currently ships AST export and `code-units`. An open question is how much additional projection flexibility should become part of the supported public surface.
 
-* **Performance:**
-  Analyzing large repositories can be expensive in time and memory, especially when multiple passes are involved (parse, process, report). It will be important to:
+Options under consideration:
 
-  * optimize tree traversals,
-  * cache intermediate results,
-  * offer “fast” versus “complete” modes.
+- code-driven extension points with high flexibility and a higher maintenance bar
+- configuration-driven views with lower technical overhead but more product and parsing design work
 
-* **Parser maturity and quality:**
-  Extraction quality depends heavily on the parsers (AST, tokenization, heuristics).
+The constraint is to avoid promising a flexible projection system before the long-term support cost is understood.
 
-  * Python has native support in the standard library. Markdown needs its own heuristics and golden tests to avoid degrading the tree.
-  * Parsers should be heavily exercised with real edge cases from the fixtures directory.
+## 2. Performance and scaling
 
-* **Competition and alternatives:**
-  There are advanced tools such as ctags, tree-sitter, linters, static analysis, doc generators, and IDEs that already cover parts of this problem.
+Large repositories stress the current runtime in predictable places:
 
-  * **RepoGPT differentiation:** unified analysis, structured and queryable output, explicit LLM/RAG orientation, and extensibility.
+- deterministic collection via full-tree traversal and stable sort
+- Python comment association on deep or dense trees
+- parsing and span extraction for large files
 
-* **Potential use cases beyond LLMs:**
+Open questions:
 
-  * Automatic documentation generation: API skeletons, module summaries.
-  * Internal and external dependency analysis.
-  * Code smell detection or custom pattern detection.
-  * Assisted refactoring: understanding impact, dependencies, and entry points.
-  * Visual maps, diagrams, and metrics for architects and developers.
+- which bottlenecks deserve dedicated benchmarks first
+- whether defensive guards are preferable to broad optimization
+- when incremental analysis or caching becomes worth the added complexity
 
+## 3. Parser maturity
 
-## TODOs and Improvement Opportunities
+Python and Markdown are intentionally the only supported languages today. The main challenge is not adding more parsers quickly; it is maintaining stable semantics and contract quality for the languages already in scope.
 
-1. **Parallelization and caching**
+Open questions:
 
-   * Introduce parallel processing per file or per node.
-   * Cache syntax trees for repositories with incremental changes.
+- which parser-emitted metadata is reliable enough to document as contract-level expectation
+- how much parser-specific enrichment can be added without creating a misleading cross-language abstraction
+- which real-world edge cases should be promoted into golden or integration fixtures
 
-2. **Implement the reporter**
+## 4. Retrieval semantics beyond the current baseline
 
-   * Generate dependency graphs, for example with Graphviz.
-   * Add metrics for code complexity, test coverage, and comment ratio.
+The current retrieval helpers are intentionally small and contract-focused. They are useful for comparison but do not yet answer broader questions about retrieval quality or context assembly policy.
 
-3. **Interactive UI / UX**
+Open questions:
 
-   * A lightweight web app with filterable views (imports, TODOs, docstrings).
-   * IDE integration only after the artifact contract is stabilized.
+- what additional structure is worth exposing without turning public artifacts into graph snapshots
+- how to evaluate retrieval behavior beyond overlap and simple expansion counts
+- when bundle-level policies should become explicit public contract instead of benchmark-only behavior
 
-4. **Incremental release strategy**
+## 5. Extension boundaries
 
-   * Consolidate `Py + Md` before opening up new languages.
-   * Create concrete use-case examples such as code RAG, audits, and structured diffs.
+RepoGPT is internally modular, but that does not automatically mean every internal seam should become public extension API.
 
-5. **Ecosystem and collaboration**
+Open questions:
 
-   * Document the adapter and processor APIs clearly.
-   * Open up real extensibility only once the v1 schema has proven stable.
+- which parser, projector, or writer seams are stable enough to document for external use
+- how much plugin-like extensibility is realistic without raising support costs sharply
+- whether extensibility should stay code-centric or grow a supported configuration surface
+
+## 6. Product positioning
+
+RepoGPT overlaps with tools such as tree-sitter-based analyzers, static analysis tooling, documentation generators, and indexing pipelines. The open challenge is to keep the product boundary clear.
+
+Current differentiation:
+
+- deterministic repository abstraction
+- explicit public artifact contracts
+- support for both human-facing and LLM-facing downstream consumers
+
+The open question is how far RepoGPT should expand beyond artifact generation without diluting that core.

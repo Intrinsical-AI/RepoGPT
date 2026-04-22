@@ -14,12 +14,16 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
       - name: Cache deps
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+          path: |
+            ~/.cache/uv
+            ~/.cache/pre-commit
+          key: ${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
       - run: |
-          pip install -e ".[dev]"
-          pre-commit run --all-files
-          pytest
+          uv sync --extra dev --locked
+          uv run pre-commit run --all-files
+          uv run pytest -q
