@@ -242,7 +242,7 @@ def test_code_units_projection_is_stable_with_unicode_path_and_invalid_utf8_cont
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "códigö.py"
-    content = b"def hello() -> str:\n" b"    # saludo\xff\n" b"    return 'ok'\n"
+    content = b"def hello() -> str:\n    # saludo\xff\n    return 'ok'\n"
     path.write_bytes(content)
     raw = path.read_bytes()
 
