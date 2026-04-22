@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
+import pathspec
+
 from repogpt.adapters.fs.collector import DefaultCollector, ignore_reason, should_ignore
 from repogpt.domain.analysis import AnalysisRequest
 
@@ -144,3 +146,104 @@ def test_collect_skips_file_that_disappears_during_stat(tmp_path: Path) -> None:
     assert len(files) == 1
     assert files[0].relative_path == "stable.py"
     assert any(item.relative_path == "vanishing.py" for item in skipped)
+
+
+def test_collect_handles_invalid_repogptignore_pattern_without_failing(tmp_path: Path) -> None:
+    (tmp_path / ".repogptignore").write_text("[invalid\n", encoding="utf-8")
+    (tmp_path / "keep.py").write_text("print('ok')", encoding="utf-8")
+    (tmp_path / "skip.py").write_text("print('no')", encoding="utf-8")
+
+    collector = DefaultCollector()
+
+    def raise_pattern_error(*args: object, **kwargs: object) -> pathspec.PathSpec:
+        _ = args, kwargs
+        raise ValueError("invalid pattern")
+
+    with patch.object(pathspec.PathSpec, "from_lines", raise_pattern_error):
+        files, skipped = collector.collect(AnalysisRequest(repo_root=tmp_path), {"py"})
+
+    assert {item.relative_path for item in files} == {"keep.py", "skip.py"}
+    assert {item.relative_path for item in skipped} == {".repogptignore"}
+
+
+def test_collect_treats_ambiguous_binary_without_null_as_text(tmp_path: Path) -> None:
+    (tmp_path / "ambiguous.py").write_bytes(b"\xff\xfe\xfd" + b"x = 1")
+
+    files, skipped = DefaultCollector().collect(AnalysisRequest(repo_root=tmp_path), {"py"})
+
+    assert any(item.relative_path == "ambiguous.py" for item in files)
+    assert {item.relative_path for item in skipped} == set()
+
+
+def test_collect_skips_symlinks_by_default(tmp_path: Path) -> None:
+    (tmp_path / "real.py").write_text("x=1", encoding="utf-8")
+    (tmp_path / "link_to_real.py").symlink_to("real.py")
+
+    files, skipped = DefaultCollector().collect(AnalysisRequest(repo_root=tmp_path), {"py"})
+
+    assert any(item.relative_path == "real.py" for item in files)
+    assert any(
+        item.relative_path == "link_to_real.py" and item.reason == "symlink" for item in skipped
+    )
+
+
+def test_collect_handles_long_relative_paths_in_output(tmp_path: Path) -> None:
+    nested = tmp_path
+    for _ in range(3):
+        nested = nested / ("nested_" + "x" * 40)
+        nested.mkdir()
+    (nested / ("module_" + "y" * 120 + ".py")).write_text("x = 1", encoding="utf-8")
+
+    files, skipped = DefaultCollector().collect(AnalysisRequest(repo_root=tmp_path), {"py"})
+
+    assert len(skipped) == 0
+    assert len(files) == 1
+    assert files[0].relative_path.endswith("module_" + "y" * 120 + ".py")
+
+
+def test_collect_on_large_synthetic_repo_stable_order_and_test_filter(tmp_path: Path) -> None:
+    for index in range(180):
+        suffix = "py" if index % 2 == 0 else "md"
+        if index % 11 == 0:
+            folder = "tests"
+            name = f"module_{index:03d}.{'py' if index % 4 == 0 else 'md'}"
+        elif index % 7 == 0:
+            folder = "package"
+            name = f"test_{index:03d}." + suffix
+        else:
+            folder = f"pkg_{index % 13}"
+            name = f"file_{index:03d}." + suffix
+
+        path = tmp_path / folder / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"value = {index}", encoding="utf-8")
+
+    expected_all = sorted(
+        path.relative_to(tmp_path).as_posix()
+        for path in tmp_path.rglob("*")
+        if path.is_file() and path.suffix.lstrip(".").lower() in {"py", "md"}
+    )
+
+    expected_without_tests = [
+        item
+        for item in expected_all
+        if not item.startswith("tests/") and not Path(item).name.startswith(("test_", "test-"))
+    ]
+    expected_with_tests = [
+        item for item in expected_all if item.endswith(".py") or item.endswith(".md")
+    ]
+
+    files_default, skipped_default = DefaultCollector().collect(
+        AnalysisRequest(repo_root=tmp_path, include_tests=False),
+        {"py", "md"},
+    )
+    files_include_tests, skipped_include = DefaultCollector().collect(
+        AnalysisRequest(repo_root=tmp_path, include_tests=True),
+        {"py", "md"},
+    )
+
+    assert [item.relative_path for item in files_default] == expected_without_tests
+    assert [item.relative_path for item in files_include_tests] == expected_with_tests
+    assert skipped_default
+    assert any(item.reason == "tests_excluded" for item in skipped_default)
+    assert not skipped_include

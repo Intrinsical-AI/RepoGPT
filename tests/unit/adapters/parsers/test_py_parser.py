@@ -234,3 +234,102 @@ def test_associate_comments_attaches_to_deepest_containing_node() -> None:
     assert inner.comments == [{"text": "inside inner", "line": 4}]
     assert outer.comments == [{"text": "inside outer only", "line": 2}]
     assert root.comments == [{"text": "outside all", "line": 11}]
+
+
+def test_associate_comments_handles_boundary_lines_and_many_items_without_misrouting() -> None:
+    parser = PythonParser()
+    root = CodeNode(
+        id="root",
+        type="module",
+        name="root",
+        language="py",
+        path="root.py",
+        start_line=1,
+        end_line=40,
+    )
+    outer = CodeNode(
+        id="outer",
+        type="class",
+        name="Outer",
+        language="py",
+        path="root.py",
+        start_line=3,
+        end_line=25,
+        parent_id="root",
+    )
+    inner = CodeNode(
+        id="inner",
+        type="method",
+        name="inner",
+        language="py",
+        path="root.py",
+        start_line=8,
+        end_line=18,
+        parent_id="outer",
+    )
+    other = CodeNode(
+        id="other",
+        type="function",
+        name="other",
+        language="py",
+        path="root.py",
+        start_line=30,
+        end_line=38,
+        parent_id="root",
+    )
+    root.children.extend([outer, other])
+    outer.children.append(inner)
+
+    comments = [
+        {"text": "before_first", "line": 1},
+        {"text": "before_outer", "line": 2},
+        {"text": "inside_outer", "line": 6},
+        {"text": "inside_inner", "line": 9},
+        {"text": "inside_other", "line": 30},
+        {"text": "after_all", "line": 99},
+    ]
+    parser._associate_comments(root, comments)
+
+    assert root.comments == [
+        {"text": "before_first", "line": 1},
+        {"text": "before_outer", "line": 2},
+        {"text": "after_all", "line": 99},
+    ]
+    assert outer.comments == [{"text": "inside_outer", "line": 6}]
+    assert inner.comments == [{"text": "inside_inner", "line": 9}]
+    assert other.comments == [{"text": "inside_other", "line": 30}]
+
+
+def test_associate_comments_with_many_comment_lines_stays_deterministic_and_fast() -> None:
+    parser = PythonParser()
+    depth = 800
+    root = CodeNode(
+        id="root",
+        type="module",
+        name="root",
+        language="py",
+        path="root.py",
+        start_line=1,
+        end_line=depth,
+    )
+    current = root
+    for index in range(1, depth):
+        child = CodeNode(
+            id=f"node-{index}",
+            type="function",
+            name=f"f{index}",
+            language="py",
+            path="root.py",
+            start_line=index,
+            end_line=index,
+            parent_id=current.id,
+        )
+        current.children.append(child)
+        current = child
+
+    comments = [{"text": f"comment {index}", "line": index} for index in range(1, depth, 2)]
+    parser._associate_comments(root, comments)
+
+    seen_comments = all_comments(root)
+    assert len(seen_comments) == len(comments)
+    assert {comment["line"] for comment in seen_comments} == {entry["line"] for entry in comments}

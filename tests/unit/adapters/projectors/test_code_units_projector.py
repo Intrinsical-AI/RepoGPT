@@ -150,3 +150,128 @@ def test_code_units_projection_markdown_falls_back_to_module(tmp_path: Path) -> 
 
     assert len(payload["documents"]) == 1
     assert _document(payload)["unit_type"] == "module"
+
+
+def test_code_units_projection_preserves_scope_unicity_for_symbol_collisions(
+    tmp_path: Path,
+) -> None:
+    content = """
+def helper():
+    return "global"
+
+
+class Demo:
+    def helper(self):
+        return "method"
+
+    class Inner:
+        def helper(self):
+            return "inner"
+
+def outer_helper():
+    pass
+"""
+
+    parsed_file = _python_parsed_file(tmp_path, "sample.py", content)
+    projection = (
+        CodeUnitsProjector()
+        .project(
+            AnalysisResult(
+                parsed_files=[parsed_file],
+                skipped_files=[],
+                stats=AnalysisStats(total_files=1, ok_files=1, failed_files=0, skipped_files=0),
+            ),
+            AnalysisRequest(repo_root=tmp_path),
+        )
+        .json_payload
+    )
+
+    documents = _documents(projection)
+    external_ids = [document["external_id"] for document in documents]
+    qualified_names = [document["qualified_name"] for document in documents]
+
+    assert len(external_ids) == len(set(external_ids))
+    assert len(qualified_names) == len(set(qualified_names))
+    helpers = [document for document in documents if document["symbol"] == "helper"]
+    assert {document["unit_type"] for document in helpers} == {"function", "method"}
+    assert any(document["unit_type"] == "function" for document in helpers)
+    assert any(document["unit_type"] == "method" for document in helpers)
+    assert any(document["qualified_name"] == "helper" for document in helpers)
+    assert any(document["qualified_name"] == "Demo.helper" for document in helpers)
+    assert any(document["qualified_name"] == "Demo.Inner.helper" for document in helpers)
+
+
+def test_code_units_projection_markdown_duplicate_headings_are_ordinalized(tmp_path: Path) -> None:
+    parsed_file = _markdown_parsed_file(
+        tmp_path,
+        "README.md",
+        "# Title\n"
+        "## Details\n"
+        "Some text\n"
+        "## Details\n"
+        "Other text\n"
+        "### Subheading\n"
+        "## Details\n"
+        "Third\n",
+    )
+
+    projection = (
+        CodeUnitsProjector()
+        .project(
+            AnalysisResult(
+                parsed_files=[parsed_file],
+                skipped_files=[],
+                stats=AnalysisStats(total_files=1, ok_files=1, failed_files=0, skipped_files=0),
+            ),
+            AnalysisRequest(repo_root=tmp_path),
+        )
+        .json_payload
+    )
+
+    qualified_names = [document["qualified_name"] for document in _documents(projection)]
+    heading_names = [
+        name for name in qualified_names if name.startswith("title") or "details" in name
+    ]
+
+    assert "title/details" in heading_names
+    assert "title/details-2" in heading_names
+    assert "title/details-3" in heading_names
+
+
+def test_code_units_projection_is_stable_with_unicode_path_and_invalid_utf8_content(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "códigö.py"
+    content = b"def hello() -> str:\n" b"    # saludo\xff\n" b"    return 'ok'\n"
+    path.write_bytes(content)
+    raw = path.read_bytes()
+
+    sample = LoadedFile(
+        collected_file=CollectedFile(
+            abs_path=path,
+            relative_path=path.name,
+            language="py",
+        ),
+        raw_bytes=raw,
+        text=raw.decode("utf-8", errors="replace"),
+        digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
+    )
+    parsed_file = ParsedFile(loaded_file=sample, root=PythonParser().parse(sample))
+    result = AnalysisResult(
+        parsed_files=[parsed_file],
+        skipped_files=[],
+        stats=AnalysisStats(total_files=1, ok_files=1, failed_files=0, skipped_files=0),
+    )
+
+    first_request = AnalysisRequest(repo_root=tmp_path)
+    second_request = AnalysisRequest(repo_root=tmp_path)
+    projection = CodeUnitsProjector().project(result, first_request).json_payload
+    projection2 = CodeUnitsProjector().project(result, second_request).json_payload
+    documents = _documents(projection)
+    documents2 = _documents(projection2)
+
+    assert documents[0]["path"] == path.name
+    assert documents == documents2
+    content_hash = hashlib.sha256(documents[0]["content"].encode("utf-8")).hexdigest()
+    assert content_hash == documents[0]["content_hash"]
+    assert "�" in documents[0]["content"]
