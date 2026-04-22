@@ -7,16 +7,12 @@ from pathlib import Path
 
 import structlog
 
-from repogpt.adapters.fs.collector import DefaultCollector
-from repogpt.adapters.fs.loader import DefaultLoader
 from repogpt.adapters.parsers.registry import StaticParserRegistry
-from repogpt.adapters.projectors.ast_projector import AstProjector
-from repogpt.adapters.projectors.code_units_projector import CodeUnitsProjector
 from repogpt.adapters.writers.artifact_writer import ArtifactWriter
-from repogpt.application.analyze_repo import AnalyzeRepo
 from repogpt.application.exit_codes import exit_code_for_result
 from repogpt.domain.analysis import AnalysisRequest, OutputTarget
 from repogpt.domain.errors import InvalidRepoError
+from repogpt.runtime import build_analyze_repo
 
 LEVELS: dict[str, int] = {"DEBUG": logging.DEBUG, "INFO": logging.INFO}
 
@@ -50,7 +46,6 @@ def main() -> int:  # noqa: D401
     parser.add_argument("-o", "--output")
     parser.add_argument("--languages")
     parser.add_argument("--emit", choices=["ast", "code-units"], default="ast")
-    # phase‑3 flags
     parser.add_argument("--log-level", choices=["INFO", "DEBUG"], default="INFO")
     parser.add_argument("--fail-fast", action="store_true")
 
@@ -92,14 +87,7 @@ def main() -> int:  # noqa: D401
     log.info("starting run", repo=str(request.repo_root), format=request.format)
 
     try:
-        result = AnalyzeRepo(
-            collector=DefaultCollector(),
-            loader=DefaultLoader(),
-            parser_registry=registry,
-            ast_projector=AstProjector(),
-            code_units_projector=CodeUnitsProjector(),
-            writer=ArtifactWriter(),
-        ).run(request)
+        result = build_analyze_repo(ArtifactWriter()).run(request)
         if result.stopped_early and result.stats.failed_files > 0:
             first_failure = next(
                 parsed_file.failure.message

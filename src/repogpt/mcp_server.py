@@ -6,15 +6,9 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from repogpt import __version__
-from repogpt.adapters.fs.collector import DefaultCollector
-from repogpt.adapters.fs.loader import DefaultLoader
-from repogpt.adapters.parsers.registry import StaticParserRegistry
-from repogpt.adapters.projectors.ast_projector import AstProjector
-from repogpt.adapters.projectors.code_units_projector import CodeUnitsProjector
-from repogpt.application.analyze_repo import AnalyzeRepo
 from repogpt.domain.analysis import (
     AnalysisRequest,
     AstProjection,
@@ -22,6 +16,7 @@ from repogpt.domain.analysis import (
     OutputTarget,
 )
 from repogpt.application.exit_codes import exit_code_for_result
+from repogpt.runtime import build_analyze_repo
 from repogpt.utils.retrieval_profiles import compare_profiles
 
 logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
@@ -44,12 +39,12 @@ class _CaptureWriter:
 def _build_request(
     *,
     repo_path: str,
-    emit: str,
+    emit: Literal["ast", "code-units"],
     include_tests: bool,
     languages: list[str] | None,
     fail_fast: bool,
-    flatten: str | None = None,
-    fmt: str = "json",
+    flatten: Literal["node", "file"] | None = None,
+    fmt: Literal["json", "ndjson"] = "json",
 ) -> AnalysisRequest:
     return AnalysisRequest(
         repo_root=Path(repo_path).resolve(),
@@ -65,13 +60,13 @@ def _build_request(
 
 def _run_repogpt_analysis(
     *,
-    emit: str,
+    emit: Literal["ast", "code-units"],
     repo_path: str,
     include_tests: bool,
     languages: list[str] | None,
     fail_fast: bool,
-    flatten: str | None = None,
-    fmt: str = "json",
+    flatten: Literal["node", "file"] | None = None,
+    fmt: Literal["json", "ndjson"] = "json",
 ) -> dict[str, Any]:
     request = _build_request(
         repo_path=repo_path,
@@ -83,22 +78,18 @@ def _run_repogpt_analysis(
         fmt=fmt,
     )
     capture_writer = _CaptureWriter()
-    result = AnalyzeRepo(
-        collector=DefaultCollector(),
-        loader=DefaultLoader(),
-        parser_registry=StaticParserRegistry(),
-        ast_projector=AstProjector(),
-        code_units_projector=CodeUnitsProjector(),
-        writer=capture_writer,
-    ).run(request)
+    result = build_analyze_repo(capture_writer).run(request)
     if capture_writer.projection is None:
         raise RuntimeError("RepoGPT analysis did not produce a projection.")
+    if fmt == "json":
+        artifact: dict[str, Any] | list[dict[str, Any]] = capture_writer.projection.json_payload
+    else:
+        projection = cast(AstProjection, capture_writer.projection)
+        artifact = projection.ndjson_records
 
     return {
         "exit_code": exit_code_for_result(result),
-        "artifact": capture_writer.projection.json_payload
-        if fmt == "json"
-        else capture_writer.projection.ndjson_records,
+        "artifact": artifact,
         "stderr": "",
     }
 
@@ -136,8 +127,8 @@ def tool_emit_ast(
         include_tests=include_tests,
         languages=languages,
         fail_fast=fail_fast,
-        flatten=flatten,
-        fmt=format,
+        flatten=cast(Literal["node", "file"], flatten),
+        fmt=cast(Literal["json", "ndjson"], format),
     )
 
 

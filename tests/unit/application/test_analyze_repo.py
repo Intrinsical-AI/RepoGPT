@@ -3,27 +3,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from repogpt.adapters.fs.collector import DefaultCollector
-from repogpt.adapters.fs.loader import DefaultLoader
-from repogpt.adapters.parsers.registry import StaticParserRegistry
-from repogpt.adapters.projectors.ast_projector import AstProjector
-from repogpt.adapters.projectors.code_units_projector import CodeUnitsProjector
 from repogpt.adapters.writers.artifact_writer import ArtifactWriter
 from repogpt.application.analyze_repo import AnalyzeRepo
 from repogpt.application.exit_codes import exit_code_for_result
 from repogpt.domain.analysis import AnalysisRequest, OutputTarget
 from repogpt.domain.errors import InvalidRepoError
+from repogpt.runtime import build_analyze_repo
 
 
 def _use_case() -> AnalyzeRepo:
-    return AnalyzeRepo(
-        collector=DefaultCollector(),
-        loader=DefaultLoader(),
-        parser_registry=StaticParserRegistry(),
-        ast_projector=AstProjector(),
-        code_units_projector=CodeUnitsProjector(),
-        writer=ArtifactWriter(),
-    )
+    return build_analyze_repo(ArtifactWriter())
 
 
 def test_analyze_repo_success_returns_zero(tmp_path: Path) -> None:
