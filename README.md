@@ -1,276 +1,219 @@
 # RepoGPT
 
-> **Abstraction, summarization and code intelligence — built for both humans and LLMs**
-> **Status:** RepoGPT already exposes a structured intermediate representation capable of supporting hierarchical and multi-granular retrieval. However, the RAG-oriented projection (`code-units`) flattens much of that hierarchy into plain code units, so the current benchmark mainly evaluates unit segmentation quality rather than true hierarchical retrieval behavior.
+RepoGPT turns a source tree into deterministic structural artifacts for humans, automation, and LLM-oriented tooling.
 
-RepoGPT turns a source-tree into a *consultable abstraction layer*:  
-structured, queryable and ready for downstream indexing or RAG pipelines.
+Primary public interfaces today:
 
+- CLI: `repogpt`
+- MCP stdio server: `repogpt-mcp`
+
+Runtime pipeline:
+
+```text
+[Collector] -> [Loader] -> [Parser] -> [Projector] -> [Writer]
+     |            |           |            |             |
+   paths      bytes/text   CodeNode IR   AST / code-units   file / stdout
 ```
 
-[Collector] → [Parser] → [Processor] → [Publisher]
-    |            |            |             |
-  paths    CodeNode-trees   optional     JSON / NDJSON / stdout
+Key properties:
 
-```
+- Supported languages in the current contract: Python (`.py`) and Markdown (`.md`)
+- Public artifact contracts: AST JSON/NDJSON (`schema_version: "1"`) and `code-units` JSON (`schema_version: "4"`)
+- Deterministic collection, projection, and snapshot-scoped identifiers
+- Structured logs on STDERR, artifact data on STDOUT or file output
+- Explicit partial-failure reporting with clean exit codes
+- Retrieval profile helpers for `flat_rag_v1` and `structured_rag_v1`
 
-* **Languages** – Python (`.py`) and Markdown (`.md`) only in v1.
-* **Outputs** – hierarchical or flat, envelope `JSON` or streaming `NDJSON`.
-* **Logging** – powered by `structlog`; fully STDOUT-safe.
-* **Fail-fast** – abort immediately on the first parser error if you need strict runs.
-* **Ignore rules** – `.repogptignore` (git-wildmatch) plus sensible defaults (`.git`, `node_modules`, …).
-* **Markdown fences** – both backtick (`` ``` ``) and tilde (`~~~`) delimiters; multi-word info strings (```` ```python console ````) use the first token as the language.
-
-Architecture and contracts:
-
-* structural IR and projections are treated as separate contracts
-* `code-units` v4 adds minimal hierarchy metadata for light structured retrieval
-* architecture, Phase 1 integration, and roadmap are documented in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-
----
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for contract and architecture details, and [ROADMAP.md](ROADMAP.md) for future work only.
 
 ## Installation
 
 ```bash
 git clone https://github.com/Intrinsical-AI/RepoGPT.git
 cd RepoGPT
-```
-
-**Recommended** (reproducible via `uv.lock`):
-
-```bash
 uv sync
 ```
 
-**Alternative** (classic venv):
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-```
-
----
-
-## Development and Code Quality
-
-This project uses [pre-commit](https://pre-commit.com) to enforce automated quality checks:
-
-- **Linting and auto-formatting** (`black`, `ruff`)
-- **Type checking** (`mypy`)
-- **Reproducible tests and checks** (`pytest -q`, `ruff`, `mypy`)
-
-**How do I contribute safely?**
-
-1. Install pre-commit once:
-    ```
-    pip install pre-commit
-    pre-commit install
-    ```
-
-2. Before committing, run all checks:
-    ```
-    pre-commit run --all-files
-    ```
-
-> If any check fails, **fix the code before pushing or opening a PR**.  
-> The CI pipeline is equally strict.
-
-
----
+RepoGPT uses `uv` as the supported local and CI bootstrap path.
 
 ## Quick start
 
 ```bash
-# analyse a codebase and emit a single JSON file
-repogpt path-to-project/ -o report.json
+# analyze a repository and write AST JSON to a file
+uv run repogpt path-to-project/ -o analysis.json
 
-# NDJSON streamed to stdout (great for pipes)
-repogpt path-to-project/ --flatten node --format ndjson --stdout | jq 'select(.record_type=="node" and .type=="class")'
+# stream AST NDJSON to stdout
+uv run repogpt path-to-project/ --format ndjson --flatten file --stdout
 
-# code-units projection for native RAG ingestion
-repogpt path-to-project/ --emit code-units --format json --stdout
+# emit retrieval-oriented code-units JSON
+uv run repogpt path-to-project/ --emit code-units --stdout
 
-# compare the two Phase 1 retrieval profiles on a `code-units` artifact
-python benchmark_retrieval_profiles.py code_units.json "helper"
-
+# compare the two built-in retrieval profiles over a code-units artifact
+uv run python benchmark_retrieval_profiles.py code_units.json "helper"
 ```
-
----
 
 ## CLI reference
 
-| Flag                       | Default         | Description                                                                                                                     |
-| -------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `--emit {ast,code-units}`  | `ast`           | `ast`: structural tree export in JSON or NDJSON.<br>`code-units`: retrieval projection in JSON only (`Py + Md`, schema `4`).   |
-| `--flatten {node,file}`    | `node`          | AST only. `node`: every node appears as an output record.<br>`file`: only the root node per file is emitted.                     |
-| `--format {json,ndjson}`   | `json`          | AST only. `json`: envelope with `stats`, `failures` and `records`.<br>`ndjson`: stream of `node`, `failure` and `summary`.      |
-| `--stdout`                 | -               | Stream to STDOUT instead of file.<br>Passing `-o /dev/stdout` has the same effect.                                              |
-| `-o, --output PATH`        | depends on emit | Destination file.<br>Defaults to `analysis.json` for AST and `code_units.json` for `code-units` if omitted.                    |
-| `--languages "py,md"`      | all parsers     | Comma-separated, case-insensitive whitelist of supported languages.                                                             |
-| `--include-tests`          | *off*           | Do **not** skip `tests/` directories, `test_*.py`, or `test-*.py` files.                                                       |
-| `--log-level {INFO,DEBUG}` | `INFO`          | Structured logs to STDERR.                                                                                                      |
-| `--fail-fast`              | *off*           | Abort on the first parser error (exit 1).                                                                                       |
+| Flag | Default | Description |
+| --- | --- | --- |
+| `--emit {ast,code-units}` | `ast` | `ast` emits the structural export. `code-units` emits the retrieval-oriented projection. |
+| `--flatten {node,file}` | `node` | AST only. `node` emits every node; `file` emits only the root node per file. |
+| `--format {json,ndjson}` | `json` | AST supports `json` and `ndjson`. `code-units` supports `json` only. |
+| `--stdout` | off | Write the artifact to STDOUT instead of a file. |
+| `-o, --output PATH` | depends on projection | Defaults to `analysis.json` for AST and `code_units.json` for `code-units`. |
+| `--languages "py,md"` | all supported parsers | Comma-separated, case-insensitive whitelist of enabled languages. |
+| `--include-tests` | off | Include `tests/` directories and `test_*.py` / `test-*.py` files. |
+| `--log-level {INFO,DEBUG}` | `INFO` | Structured log level for STDERR output. |
+| `--fail-fast` | off | Stop on the first parse error and return exit code `1`. |
 
-`--emit code-units` only supports `--format json`.
+Notes:
 
-AST JSON uses `records`; `code-units` JSON uses `documents`.
+- `--emit code-units` only supports `--format json`.
+- Passing `-o /dev/stdout` behaves like `--stdout`.
+- AST JSON uses `records`; `code-units` JSON uses `documents`.
 
 ### Exit codes
 
-| Code | Meaning                                                                 |
-| ---- | ----------------------------------------------------------------------- |
-| `0`  | All files parsed successfully.                                          |
-| `1`  | `--fail-fast` triggered: first parse error caused an early abort.       |
-| `2`  | Partial run: one or more files failed, artifact still emitted.          |
-| `3`  | Invalid repository path (not found, not a directory, permission denied).|
+| Code | Meaning |
+| --- | --- |
+| `0` | All collected files parsed successfully. |
+| `1` | `--fail-fast` stopped the run after the first parse error. |
+| `2` | Partial run: one or more files failed, artifact still emitted. |
+| `3` | Invalid repository path or unrecoverable runtime error. |
 
-> Without `--fail-fast` (the default), the tool always exits `0` or `2` — never `1` — even if files failed to parse.
+Without `--fail-fast`, runs return `0` or `2`, never `1`.
 
----
+## Collection and skip rules
 
-## `.repogptignore`
+RepoGPT collects files with a deterministic `rglob()` walk plus stable relative-path ordering. The public artifact contains parsed files and parse failures; skipped files remain internal implementation detail.
 
-Use the same glob syntax as `.gitignore` to exclude paths or files **in addition** to the built-in defaults.
+Built-in ignores are always excluded:
 
-**Built-in ignores** (always excluded, non-configurable):
+`.git`, `.hg`, `.svn`, `__pycache__`, `.venv`, `venv`, `env`, `.mypy_cache`, `.pytest_cache`, `dist`, `build`, `node_modules`, `.tox`, `.DS_Store`, `.idea`, `.vscode`
 
-`.git` · `.hg` · `.svn` · `__pycache__` · `.venv` · `venv` · `env` · `.mypy_cache` · `.pytest_cache` · `dist` · `build` · `node_modules` · `.tox` · `.DS_Store` · `.idea` · `.vscode`
+Additional collection rules:
 
-> Note: hidden files and directories (dotfiles) are **not** excluded by default unless they appear in the list above. Use `.repogptignore` to exclude them.
-> Files larger than **2 MB** are always skipped regardless of ignore rules.
+- `.repogptignore` uses gitignore-style matching via `pathspec`
+- test paths are skipped unless `--include-tests` is set
+- files larger than `2_000_000` bytes are skipped
+- symlinks are skipped
+- likely binary files are skipped
+- unsupported extensions are skipped before parsing
+
+Hidden files and directories are not excluded by default unless they match one of the built-in ignores or a `.repogptignore` rule.
+
+Example `.repogptignore`:
 
 ```gitignore
-# ignore generated docs
+# generated documentation
 docs/build/
 
-# ignore big assets
+# large assets
 *.png
 *.pdf
 ```
 
----
+## Artifact contracts
 
-## Output examples
+### AST export (`schema_version: "1"`)
 
-### 1. JSON envelope
+AST export is the direct structural projection of the internal `CodeNode` tree.
 
-```json
-{
-  "schema_version": "1",
-  "repo_root": "/abs/path/to/repo",
-  "stats": { "total_files": 3, "ok_files": 2, "failed_files": 1, "emitted_records": 2 },
-  "failures": [{ "record_type": "failure", "path": "bad.py", ... }],
-  "records": [{ "record_type": "node", "type": "module", "path": "src/app.py", ... }]
-}
-```
+- JSON payload keys: `schema_version`, `repo_root`, `stats`, `failures`, `records`
+- NDJSON record types: `node`, `failure`, `summary`
+- failure records include file digest information and parser error text
 
-### 2. NDJSON
+### Code-units (`schema_version: "4"`)
 
-```text
-{"record_type":"node","schema_version":"1","type":"module","path":"README.md","language":"md",...}
-{"record_type":"failure","schema_version":"1","path":"bad.py",...}
-{"record_type":"summary","schema_version":"1","repo_root":"/abs/path/to/repo",...}
-```
+`code-units` is the retrieval-oriented projection for downstream indexing and lightweight structured expansion.
 
-### 3. Code-units JSON
+Top-level payload fields:
 
-```json
-{
-  "schema_version": "4",
-  "kind": "code-units",
-  "repo_key": "my-repo",
-  "snapshot_id": "my-repo-4f1f0c9b8d1a2e3f",
-  "scope": "repogpt:my-repo",
-  "replace_scope": true,
-  "stats": { "total_files": 3, "ok_files": 2, "failed_files": 1, "emitted_documents": 4 },
-  "failures": [{ "path": "bad.py", "language": "py", "error": "...", "file": { "sha256": "...", "size": 42 } }],
-  "documents": [
-    {
-      "external_id": "repogpt:my-repo:src/app.py:function:helper",
-      "source_id": "repogpt:my-repo:file:src/app.py",
-      "repo_key": "my-repo",
-      "scope": "repogpt:my-repo",
-      "snapshot_id": "my-repo-4f1f0c9b8d1a2e3f",
-      "path": "src/app.py",
-      "language": "py",
-      "unit_type": "function",
-      "unit_level": "symbol",
-      "symbol": "helper",
-      "qualified_name": "helper",
-      "container_id": "repogpt:my-repo:src/app.py:module",
-      "depth": 1,
-      "ancestor_path": ["src/app.py"],
-      "start_line": 1,
-      "end_line": 2,
-      "content": "def helper():\n    return 1\n",
-      "content_hash": "f9f4c6f5d2b8d7c89d8f6d1e8c5dbe4f6f8ed0bdb0d85c6d7d064c93f8b5f4c9",
-      "docstring_present": false,
-      "has_children": false,
-      "metadata": {
-        "repo_key": "my-repo",
-        "path": "src/app.py",
-        "language": "py",
-        "unit_type": "function",
-        "unit_level": "symbol",
-        "symbol": "helper",
-        "qualified_name": "helper",
-        "container_id": "repogpt:my-repo:src/app.py:module",
-        "depth": 1,
-        "ancestor_path": ["src/app.py"],
-        "start_line": 1,
-        "end_line": 2,
-        "content_hash": "f9f4c6f5d2b8d7c89d8f6d1e8c5dbe4f6f8ed0bdb0d85c6d7d064c93f8b5f4c9",
-        "docstring_present": false,
-        "has_children": false,
-        "file": { "sha256": "...", "size": 42 },
-        "tags": [],
-        "attributes": {},
-        "dependencies": []
-      }
-    }
-  ]
-}
-```
+- `schema_version`
+- `kind`
+- `repo_key`
+- `snapshot_id`
+- `scope`
+- `replace_scope`
+- `stats`
+- `failures`
+- `documents`
 
-`--emit code-units` uses a dedicated public contract in schema `4`:
+Each document exposes retrieval-facing fields at the top level and duplicates them under `metadata` for generic import flows. Key fields include:
 
-* `external_id` is semantic and stable per unit, not derived from the internal AST `node.id`.
-* `content_hash` is `sha256(content)` for the exact emitted span and is the per-document change signal.
-* `snapshot_id` remains a repo-snapshot marker based on file hashes; it is provenance, not a per-document delta key.
-* `replace_scope: true` is emitted so canonical importers can do scope sync without extra wiring.
-* Canonical fields such as `path`, `language`, `unit_type`, `unit_level`, `symbol`, `qualified_name`, `container_id`, `depth`, `ancestor_path`, `start_line` and `end_line` live at the top level of each document and are duplicated in `metadata` for generic downstream filtering/import flows.
-* Hierarchy metadata is intentionally minimal: enough for light runtime expansion, not a full relation graph in every document.
-* If a file has no selected symbol/container units for its language, the projector falls back to emitting the root module document so the file still contributes a seedable unit.
+- `external_id`
+- `source_id`
+- `qualified_name`
+- `unit_level`
+- `container_id`
+- `depth`
+- `ancestor_path`
+- `content_hash`
+- `docstring_present`
+- `has_children`
 
----
+Contract notes:
 
-## MCP
+- `external_id` is the semantic public identifier for a projected document
+- `snapshot_id` is a repository-snapshot marker derived from collected file hashes
+- `content_hash` is `sha256(content)` for the exact emitted span
+- if a file produces no selected units for its language, the projector falls back to the root module document
 
-RepoGPT ships a compact MCP server for agent-facing artifact emission and profile comparison:
+## MCP interface
+
+RepoGPT ships a compact MCP server over stdio:
 
 ```bash
-repogpt-mcp
-# or: python -m repogpt.mcp_server
+uv run repogpt-mcp
+# or
+uv run python -m repogpt.mcp_server
 ```
 
-Tools:
+Transport and envelope:
 
-* `repogpt_emit_code_units`
-* `repogpt_emit_ast`
-* `repogpt_compare_profiles`
+- protocol: line-delimited JSON-RPC over stdio
+- initialization: `initialize`
+- tool discovery: `tools/list`
+- tool execution: `tools/call`
+- tool results are returned as JSON text content inside the JSON-RPC response
 
-The MCP surface is intentionally thin: it wraps the existing CLI and profile comparison script, and it does not introduce a separate artifact contract.
+Built-in tools:
 
----
+- `repogpt_emit_code_units`
+- `repogpt_emit_ast`
+- `repogpt_compare_profiles`
 
-## Logging & diagnostics
+Tool behavior summary:
 
-RepoGPT never mixes **data** and **logs**:
+- `repogpt_emit_code_units` returns `{"exit_code", "artifact", "stderr"}`
+- `repogpt_emit_ast` returns `{"exit_code", "artifact", "stderr"}`
+- `repogpt_compare_profiles` returns `{"exit_code", "comparison", "stderr"}`
 
-* Data → STDOUT (`--stdout`) or the output file.
-* Logs → STDERR (via `structlog`).
+`repogpt_compare_profiles` expects a path to an existing `code-units` artifact on disk.
 
-Examples:
+Minimal request example:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}
+```
+
+## Retrieval profiles and benchmark path
+
+RepoGPT includes a small benchmark path for comparing two retrieval presets over a `code-units` artifact:
+
+- `flat_rag_v1`: rank documents and return the top `k` seeds without expansion
+- `structured_rag_v1`: rank documents, keep the same seeds, then add at most one enclosing container hop per seed when available
+
+The benchmark path is intended for contract-level comparison, not as a full retrieval engine or production-quality relevance evaluation.
+
+## Logging and diagnostics
+
+RepoGPT keeps data and logs separate:
+
+- artifact data -> STDOUT or output file
+- logs -> STDERR
+
+Example log lines:
 
 ```text
 2026-03-24 02:45:04 [info     ] starting run                   format=json repo=/abs/path/to/repo
@@ -283,82 +226,93 @@ Examples:
 SyntaxError: invalid syntax'
 ```
 
-Capture with `pytest`’s `caplog`, or redirect STDERR to a file in CI.
+## Development workflow
 
----
+### Pre-commit vs full validation
 
-## Development
+`pre-commit` is a fast local quality gate. In this repository it covers:
 
-Available `make` targets:
+- `ruff-format`
+- `ruff`
+- `mypy`
+
+It does not run `pytest`. Run the test suite separately before pushing or opening a PR.
+
+Setup and common commands:
+
+```bash
+uv run pre-commit install
+uv run pre-commit run --all-files
+uv run pytest -q
+```
+
+### Make targets
 
 | Target | Command | Description |
-|---|---|---|
-| `make lint` | `ruff check .` | Lint |
-| `make type` | `mypy src tests` | Type check |
-| `make test` | `pytest -q` | Run tests |
-| `make clean` | — | Remove `__pycache__`, `.pytest_cache`, `.pyc` |
+| --- | --- | --- |
+| `make lint` | `uv run ruff check .` | Lint the codebase |
+| `make type` | `uv run mypy src tests` | Run type checks |
+| `make test` | `uv run pytest -q` | Run the test suite |
+| `make clean` | cleanup helpers | Remove Python cache artifacts |
 
-Or run the raw commands directly without `make`.
+## Project layout
 
-### Project layout
-
-```
+```text
 src/repogpt/
-├── adapters/
-│   ├── fs/             # filesystem traversal, ignore logic, file loading
-│   ├── parsers/        # language-specific parsers and parser registry
-│   ├── projectors/     # AST and code-units projections
-│   └── writers/        # artifact serialization
-├── application/        # use-case orchestration and exit codes
-├── domain/             # analysis, file, node, and error models
-├── ports/              # adapter interfaces
-├── utils/              # helper functions and retrieval profiles
-└── app/cli.py          # entry-point
+  adapters/
+    fs/
+    parsers/
+    projectors/
+    writers/
+  application/
+  app/
+  domain/
+  ports/
+  utils/
+  mcp_server.py
+  runtime.py
+tests/
+docs/
 ```
 
-### Extending to another language
+High-level responsibilities:
 
-1. Create `src/repogpt/adapters/parsers/<lang>_parser.py` implementing `parse() -> CodeNode`.
-2. Register it in `src/repogpt/adapters/parsers/registry.py`.
-3. Add parser tests under `tests/unit/adapters/parsers/` and refresh fixtures or golden payloads if the CLI contract changes.
-4. Update docs and the supported-language contract before announcing it.
-
----
+- `runtime.py` wires the shared analysis runtime
+- `app/cli.py` exposes the CLI entry point
+- `mcp_server.py` exposes the MCP stdio server
+- `adapters/` contains filesystem, parser, projector, and writer implementations
+- `application/` contains use-case orchestration and exit-code policy
+- `domain/` contains analysis, file, node, and error models
 
 ## Tests
 
+Run the full suite with:
+
+```bash
+uv run pytest -q
 ```
-pytest -q
+
+Relevant coverage areas:
+
+- collector behavior and skip rules
+- Python and Markdown parser behavior
+- AST and `code-units` contract stability
+- CLI exit codes and partial-failure semantics
+- MCP parity with CLI outputs
+
+Targeted integration checks:
+
+```bash
+uv run pytest -q tests/integration/test_cli_contract.py
+uv run pytest -q tests/integration/test_mcp_server.py
 ```
 
-The suite exercises:
+## Additional documents
 
-* Collect / ignore rules (including relative-path test detection and race-condition file disappearance)
-* Markdown & Python parsers (tilde fences, multi-word info strings, deep-tree recursion safety)
-* JSON/NDJSON contract v1
-* Code-units publisher (qualified symbol IDs, module fallback, byte-accurate file hashing)
-* CLI exit codes and partial failures
-* Import-path isolation to ensure tests run against this checkout
-
----
-
-## Roadmap
-
-* **Next** – richer Python semantics without breaking schema v1
-* **Later** – caching by file-hash + parallel workers
-* **Later** – new languages once they meet the same contract
-
----
-
-## Design notes
-
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — architecture, contracts, invariants, and roadmap.
-- [docs/CHALLENGES.md](docs/CHALLENGES.md) — open design questions, roadmap trade-offs, known limitations.
-
----
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): current architecture, public contracts, interfaces, and invariants
+- [docs/CHALLENGES.md](docs/CHALLENGES.md): open design questions and tradeoffs, not a committed roadmap
+- [ROADMAP.md](ROADMAP.md): future work after the current shipped baseline
 
 ## License
 
 [MIT](LICENSE)
-
-Happy hacking 💻

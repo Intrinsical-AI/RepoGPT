@@ -1,11 +1,17 @@
-# ¡Piensa con cabeza!
+# Test Suite Notes
 
-Por mucho que recomiende chatGPT o Gemini, en lugar de hacer fixtures para los casos, al ser un módulo de parsing; tiene sentido que hagamos los test a la vieja usanza: definiendo nuestros propios archivos hardcodeados
+This directory mixes unit tests, integration tests, golden payloads, and parser fixtures.
 
-```
-basic.py
-edge_cases.py
-docstring_examples.py
-basic.md
-with_comments.md
+Current layout:
+
+- `tests/unit/`: focused tests for adapters, application logic, runtime wiring, and utilities
+- `tests/integration/`: CLI and MCP contract coverage
+- `tests/golden/`: stable payload fixtures for public artifact contracts
+- `tests/data/`: parser-oriented sample files and edge cases
+- `tests/fixtures/`: small fixture repositories for end-to-end contract tests
+
+Run the full suite with:
+
+```bash
+uv run pytest -q
 ```
