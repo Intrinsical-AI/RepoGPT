@@ -35,6 +35,7 @@ uv sync
 ```
 
 RepoGPT uses `uv` as the supported local and CI bootstrap path.
+For development validation tools such as `pre-commit`, install the dev extra with `uv sync --extra dev`.
 
 ## Quick start
 
@@ -241,6 +242,7 @@ It does not run `pytest`. Run the test suite separately before pushing or openin
 Setup and common commands:
 
 ```bash
+uv sync --extra dev
 uv run pre-commit install
 uv run pre-commit run --all-files
 uv run pytest -q
