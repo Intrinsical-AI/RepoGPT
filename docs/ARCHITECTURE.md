@@ -204,10 +204,11 @@ It does not claim end-to-end task quality, production relevance quality, or agen
 
 Collection behavior is deterministic and currently includes:
 
-- `rglob()` over the repository root
+- deterministic pruned traversal over the repository root
 - canonical relative-path sort
 - built-in ignore directories/files
 - optional `.repogptignore`
+- silent pruning for ignored directories before descent
 - test exclusion by default
 - file-size guard
 - binary-file detection

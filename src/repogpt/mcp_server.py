@@ -16,6 +16,8 @@ from repogpt.domain.analysis import (
     OutputTarget,
 )
 from repogpt.application.exit_codes import exit_code_for_result
+from repogpt.application.languages import normalize_language_filter
+from repogpt.adapters.parsers.registry import StaticParserRegistry
 from repogpt.runtime import build_analyze_repo
 from repogpt.utils.retrieval_profiles import compare_profiles
 
@@ -46,10 +48,14 @@ def _build_request(
     flatten: Literal["node", "file"] | None = None,
     fmt: Literal["json", "ndjson"] = "json",
 ) -> AnalysisRequest:
+    registry = StaticParserRegistry()
     return AnalysisRequest(
         repo_root=Path(repo_path).resolve(),
         include_tests=include_tests,
-        supported_languages=languages,
+        supported_languages=normalize_language_filter(
+            languages,
+            supported_extensions=registry.supported_extensions(),
+        ),
         projection="code_units" if emit == "code-units" else "ast",
         format=fmt,
         flatten_kind=flatten or "node",

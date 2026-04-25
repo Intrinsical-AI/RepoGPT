@@ -1,5 +1,3 @@
-# repogpt/utils/text_processing.py
-
 import bisect
 import io
 import re
@@ -12,16 +10,12 @@ logger = structlog.get_logger(__name__)
 
 
 def count_blank_lines(text: str) -> int:
-    """Cuenta líneas completamente en blanco."""
+    """Count fully blank lines."""
     return sum(1 for line in text.splitlines() if not line.strip())
 
 
 def extract_comments(content: str, language: str = "python") -> list[dict[str, Any]]:
-    """
-    Extrae comentarios con línea para distintos lenguajes.
-
-    Devuelve: [{"text": ..., "line": ...}]
-    """
+    """Extract comments with their starting line number."""
     comments = []
     if language == "python":
         try:
@@ -40,8 +34,7 @@ def extract_comments(content: str, language: str = "python") -> list[dict[str, A
                 error=str(exc),
             )
     elif language == "markdown":
-        # Searc <!-- ... -->  HTML comments
-        # Pre-compute \n pos only one time: O(N) (upgrade from O(N×M))
+        # Pre-compute newline offsets once to avoid O(N*M) line counting.
         newline_offsets = [i for i, ch in enumerate(content) if ch == "\n"]
         for match in re.finditer(r"<!--(.*?)-->", content, re.DOTALL):
             line = bisect.bisect_left(newline_offsets, match.start()) + 1
@@ -51,20 +44,11 @@ def extract_comments(content: str, language: str = "python") -> list[dict[str, A
                     "line": line,
                 }
             )
-    # Add langs here
     return comments
 
 
 def extract_todos_fixmes(comments: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
-    """
-    Extrae TODOs y FIXMEs de una lista de comentarios.
-
-    Args:
-        comments: Lista de diccionarios con comentarios extraídos
-
-    Returns:
-        Tupla con dos listas: (todos, fixmes)
-    """
+    """Extract TODO and FIXME comment texts."""
     todos: list[str] = []
     fixmes: list[str] = []
     for c in comments:

@@ -38,7 +38,8 @@ dev = [
   "ruff>=0.0.291", 
   "mypy>=1.0",
   "pre-commit>=2.20",
-  "coverage>=6.4"
+  "coverage>=6.4",
+  "jsonschema>=4.0"
 ]
 
 

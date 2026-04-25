@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://repogpt.local/schemas/code-units-v4.schema.json",
+  "title": "RepoGPT Code Units v4",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "repo_key",
+    "snapshot_id",
+    "scope",
+    "replace_scope",
+    "stats",
+    "failures",
+    "documents"
+  ],
+  "properties": {
+    "schema_version": { "const": "4" },
+    "kind": { "const": "code-units" },
+    "repo_key": { "type": "string", "minLength": 1 },
+    "snapshot_id": { "type": "string", "minLength": 1 },
+    "scope": { "type": "string", "minLength": 1 },
+    "replace_scope": { "type": "boolean" },
+    "stats": { "$ref": "#/$defs/stats" },
+    "failures": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/failureRecord" }
+    },
+    "documents": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/document" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "fileDigest": {
+      "type": "object",
+      "required": ["size", "sha256"],
+      "properties": {
+        "size": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
+      "additionalProperties": true
+    },
+    "stats": {
+      "type": "object",
+      "required": ["total_files", "ok_files", "failed_files", "emitted_documents"],
+      "properties": {
+        "total_files": { "type": "integer", "minimum": 0 },
+        "ok_files": { "type": "integer", "minimum": 0 },
+        "failed_files": { "type": "integer", "minimum": 0 },
+        "emitted_documents": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "failureRecord": {
+      "type": "object",
+      "required": ["record_type", "schema_version", "path", "language", "error", "file"],
+      "properties": {
+        "record_type": { "const": "failure" },
+        "schema_version": { "const": "4" },
+        "path": { "type": "string" },
+        "language": { "type": "string" },
+        "error": { "type": "string" },
+        "file": { "$ref": "#/$defs/fileDigest" }
+      },
+      "additionalProperties": true
+    },
+    "document": {
+      "type": "object",
+      "required": [
+        "external_id",
+        "source_id",
+        "repo_key",
+        "scope",
+        "snapshot_id",
+        "path",
+        "language",
+        "unit_type",
+        "unit_level",
+        "symbol",
+        "qualified_name",
+        "container_id",
+        "depth",
+        "ancestor_path",
+        "start_line",
+        "end_line",
+        "content",
+        "content_hash",
+        "docstring_present",
+        "has_children",
+        "metadata"
+      ],
+      "properties": {
+        "external_id": { "type": "string", "minLength": 1 },
+        "source_id": { "type": "string", "minLength": 1 },
+        "repo_key": { "type": "string", "minLength": 1 },
+        "scope": { "type": "string", "minLength": 1 },
+        "snapshot_id": { "type": "string", "minLength": 1 },
+        "path": { "type": "string", "minLength": 1 },
+        "language": { "type": ["string", "null"] },
+        "unit_type": { "type": "string", "minLength": 1 },
+        "unit_level": { "enum": ["container", "symbol"] },
+        "symbol": { "type": ["string", "null"] },
+        "qualified_name": { "type": "string", "minLength": 1 },
+        "container_id": { "type": "string", "minLength": 1 },
+        "depth": { "type": "integer", "minimum": 0 },
+        "ancestor_path": { "type": "array", "items": { "type": "string" } },
+        "start_line": { "type": ["integer", "null"], "minimum": 1 },
+        "end_line": { "type": ["integer", "null"], "minimum": 1 },
+        "content": { "type": "string" },
+        "content_hash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "docstring_present": { "type": "boolean" },
+        "has_children": { "type": "boolean" },
+        "metadata": {
+          "type": "object",
+          "required": ["file", "tags", "attributes", "dependencies"],
+          "properties": {
+            "file": { "$ref": "#/$defs/fileDigest" },
+            "tags": { "type": "array", "items": { "type": "string" } },
+            "attributes": { "type": "object" },
+            "dependencies": { "type": "array" }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

@@ -61,10 +61,10 @@ def test_docstring_examples() -> None:
     text = load_file("docstring_examples.py")
     comments = extract_comments(text, language="python")
     texts = [c["text"] for c in comments]
-    # Puede haber o no comentarios; adaptamos a la fixture real
+    # Keep this aligned with the real parser fixture.
     assert "Comentario entre docstring y código" in texts or texts == []
     todos, fixmes = extract_todos_fixmes(comments)
-    # Aquí depende de si hay TODO/FIXME en los comentarios del fichero
+    _ = todos, fixmes
 
 
 # ---------- BASIC MARKDOWN ----------
@@ -79,22 +79,18 @@ def test_comments_basic_md() -> None:
     assert comments == []
 
 
-# Añadir tests de regresión?
 def test_comments_edge_cases_py_unicode() -> None:
     text = load_file("edge_cases_comments.py")
     comments = extract_comments(text, language="python")
     texts = [c["text"] for c in comments]
     assert "Este es un comentario con acento: áéíóú" in texts
     assert any("😊" in t for t in texts)
-    assert not any(
-        t == "# Esto tampoco es comentario" for t in texts
-    )  # No debe incluir strings no comentario
+    assert not any(t == "# Esto tampoco es comentario" for t in texts)
     assert any("tarea pendiente λ" in t for t in texts)
     assert any("Comentario sin espacio tras hash" in t for t in texts)
     assert any("indentación" in t for t in texts)
     assert any("símbolos matemáticos" in t for t in texts)
     todos, fixmes = extract_todos_fixmes(comments)
-    # Dependiendo de tu extractor, podrías tener que adaptar estos asserts:
     assert any("λ" in t for t in todos)
     assert any("símbolos matemáticos" in f for f in fixmes)
 
@@ -113,11 +109,7 @@ def test_comments_edge_cases_md() -> None:
     assert any("ComentarioSinEspacios" in t for t in texts)
 
 
-# ── EDGE-3: líneas de comentarios HTML con bisect ────────────────────────────
-
-
 def test_markdown_comment_line_numbers_are_correct() -> None:
-    # Comentario en línea 1, 3, y multilínea que empieza en 5.
     content = "<!-- first -->\ntext\n<!-- second -->\nmore\n<!-- third\nend -->\n"
     comments = extract_comments(content, language="markdown")
     assert [c["line"] for c in comments] == [1, 3, 5]
@@ -135,7 +127,6 @@ def test_markdown_comment_after_several_newlines() -> None:
 
 
 def test_markdown_comment_line_numbers_match_old_behavior() -> None:
-    # Propiedad: bisect_left produce el mismo resultado que el count("\n") original.
     content = "line1\n<!-- a -->\nline3\n\n<!-- b -->\n<!-- c -->"
     comments = extract_comments(content, language="markdown")
     expected_lines = [

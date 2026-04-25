@@ -86,7 +86,7 @@ Without `--fail-fast`, runs return `0` or `2`, never `1`.
 
 ## Collection and skip rules
 
-RepoGPT collects files with a deterministic `rglob()` walk plus stable relative-path ordering. The public artifact contains parsed files and parse failures; skipped files remain internal implementation detail.
+RepoGPT collects files with deterministic pruned traversal plus stable relative-path ordering. The public artifact contains parsed files and parse failures; skipped files remain internal implementation detail.
 
 Built-in ignores are always excluded:
 
@@ -95,6 +95,7 @@ Built-in ignores are always excluded:
 Additional collection rules:
 
 - `.repogptignore` uses gitignore-style matching via `pathspec`
+- ignored directories are pruned before descent and are not expanded into per-file skips
 - test paths are skipped unless `--include-tests` is set
 - files larger than `2_000_000` bytes are skipped
 - symlinks are skipped

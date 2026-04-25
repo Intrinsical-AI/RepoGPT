@@ -44,5 +44,5 @@ def iter_nodes(root: CodeNode) -> list[CodeNode]:
 
 
 def all_comments(root: CodeNode) -> list[dict[str, Any]]:
-    """Devuelve todos los comentarios de todos los nodos."""
+    """Return all comments from every node in the tree."""
     return [dict(c) for n in iter_nodes(root) for c in n.comments]
