@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pathspec
@@ -40,7 +41,7 @@ def load_pathspec(repo_root: Path) -> pathspec.PathSpec | None:
                 lines = [
                     line for line in handle if line.strip() and not line.strip().startswith("#")
                 ]
-            return pathspec.PathSpec.from_lines("gitignore", lines)
+            return pathspec.GitIgnoreSpec.from_lines(lines)
     except (OSError, ValueError, UnicodeError):
         logger.warning("failed to read repogptignore", path=str(ignore_file))
     return None
@@ -55,7 +56,7 @@ def ignore_reason(p: Path, repo_root: Path, spec: pathspec.PathSpec | None = Non
             return "symlink"
     except OSError:
         return "symlink_error"
-    if spec and spec.match_file(str(rel)):
+    if spec and _matches_pathspec(spec, rel, is_dir=p.is_dir()):
         return "repogptignore"
     return None
 
@@ -74,10 +75,7 @@ class DefaultCollector(CollectorPort):
         spec = load_pathspec(repo_root)
         files: list[CollectedFile] = []
         skipped: list[SkippedFile] = []
-        paths = sorted(
-            repo_root.rglob("*"),
-            key=lambda path: path.relative_to(repo_root).as_posix(),
-        )
+        paths = self._candidate_files(repo_root=repo_root, spec=spec)
         for path in paths:
             relative_path = path.relative_to(repo_root).as_posix()
             reason = ignore_reason(path, repo_root, spec)
@@ -153,6 +151,34 @@ class DefaultCollector(CollectorPort):
             )
         return files, skipped
 
+    def _candidate_files(
+        self,
+        *,
+        repo_root: Path,
+        spec: pathspec.PathSpec | None,
+    ) -> list[Path]:
+        candidates: list[Path] = []
+
+        def onerror(error: OSError) -> None:
+            logger.warning("failed to walk path", error=str(error))
+
+        for dirpath, dirnames, filenames in os.walk(repo_root, topdown=True, onerror=onerror):
+            current_dir = Path(dirpath)
+            kept_dirs: list[str] = []
+            for dirname in sorted(dirnames):
+                path = current_dir / dirname
+                if ignore_reason(path, repo_root, spec) is None:
+                    kept_dirs.append(dirname)
+            dirnames[:] = kept_dirs
+
+            for filename in sorted(filenames):
+                candidates.append(current_dir / filename)
+
+        return sorted(
+            candidates,
+            key=lambda path: path.relative_to(repo_root).as_posix(),
+        )
+
     def _is_test_path(self, path: Path, repo_root: Path) -> bool:
         rel_parts = path.relative_to(repo_root).parts
         return "tests" in rel_parts or path.name.startswith(("test_", "test-"))
@@ -181,3 +207,10 @@ class DefaultCollector(CollectorPort):
                     reason=f"{reason}_is_file_error",
                 )
             )
+
+
+def _matches_pathspec(spec: pathspec.PathSpec, rel: Path, *, is_dir: bool) -> bool:
+    relative_path = rel.as_posix()
+    if spec.match_file(relative_path):
+        return True
+    return is_dir and spec.match_file(f"{relative_path}/")

@@ -23,7 +23,10 @@ def test_collect_ignores_git_files(tmp_path: Path) -> None:
 
 
 def test_collect_respects_repogptignore(tmp_path: Path) -> None:
-    (tmp_path / ".repogptignore").write_text("*.py\n__pycache__/\n", encoding="utf-8")
+    (tmp_path / ".repogptignore").write_text("*.py\n__pycache__/\ngenerated/\n", encoding="utf-8")
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    (generated / "ignored.py").write_text("print('ignored')", encoding="utf-8")
     (tmp_path / "keep.py").write_text("print('ok')", encoding="utf-8")
     (tmp_path / "skip.py").write_text("print('no')", encoding="utf-8")
 
@@ -35,6 +38,7 @@ def test_collect_respects_repogptignore(tmp_path: Path) -> None:
         "keep.py",
         "skip.py",
     ]
+    assert "generated/ignored.py" not in {item.relative_path for item in skipped}
 
 
 def test_collect_includes_tests_when_requested(tmp_path: Path) -> None:
@@ -97,7 +101,7 @@ def test_collect_skipped_does_not_include_ignored_directories(tmp_path: Path) ->
         {"py"},
     )
 
-    assert all(item.abs_path.is_file() for item in skipped)
+    assert skipped == []
 
 
 def test_ignore_reason_reports_why_a_path_is_skipped(tmp_path: Path) -> None:
@@ -155,11 +159,11 @@ def test_collect_handles_invalid_repogptignore_pattern_without_failing(tmp_path:
 
     collector = DefaultCollector()
 
-    def raise_pattern_error(*args: object, **kwargs: object) -> pathspec.PathSpec:
+    def raise_pattern_error(*args: object, **kwargs: object) -> pathspec.GitIgnoreSpec:
         _ = args, kwargs
         raise ValueError("invalid pattern")
 
-    with patch.object(pathspec.PathSpec, "from_lines", raise_pattern_error):
+    with patch.object(pathspec.GitIgnoreSpec, "from_lines", raise_pattern_error):
         files, skipped = collector.collect(AnalysisRequest(repo_root=tmp_path), {"py"})
 
     assert {item.relative_path for item in files} == {"keep.py", "skip.py"}
