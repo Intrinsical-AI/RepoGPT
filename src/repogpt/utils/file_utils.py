@@ -1,5 +1,3 @@
-# repogpt/utils/file_utils.py
-
 import hashlib
 from pathlib import Path
 
@@ -7,20 +5,11 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
-CHUNK_SIZE = 8192  # Leer archivos en bloques de 8KB para hashing
+CHUNK_SIZE = 8192
 
 
 def calculate_file_hash(file_path: Path, algorithm: str = "sha256") -> str | None:
-    """
-    Calcula el hash de un archivo usando el algoritmo especificado.
-
-    Args:
-        file_path: Ruta al archivo.
-        algorithm: Algoritmo de hash a usar (ej. 'sha256', 'md5').
-
-    Returns:
-        El hash en formato hexadecimal como string, o None si ocurre un error.
-    """
+    """Calculate a file hash, returning None when the file cannot be read."""
     try:
         hasher = hashlib.new(algorithm)
         with file_path.open("rb") as f:
@@ -42,41 +31,24 @@ def calculate_file_hash(file_path: Path, algorithm: str = "sha256") -> str | Non
 
 
 def is_likely_binary(file_path: Path, check_bytes: int = 1024) -> bool:
-    """
-    Intenta determinar si un archivo es probablemente binario.
-
-    Actualmente usa una heurística simple: la presencia de un byte NULL
-    dentro de los primeros 'check_bytes'.
-
-    Args:
-        file_path: Ruta al archivo.
-        check_bytes: Número de bytes iniciales a revisar.
-
-    Returns:
-        True si el archivo parece binario, False en caso contrario o si hay error.
-    """
+    """Return True when a file looks binary based on an initial byte sample."""
     try:
         with file_path.open("rb") as f:
             chunk = f.read(check_bytes)
             if b"\x00" in chunk:
                 logger.debug("detected null byte", path=str(file_path))
                 return True
-            # Podríamos añadir más heurísticas aquí si fuera necesario
-            # Por ejemplo, buscar un alto porcentaje de caracteres no imprimibles.
     except FileNotFoundError:
         logger.warning("file not found while checking binary", path=str(file_path))
-        return False  # No se puede determinar, asumir no binario por seguridad
+        return False
     except PermissionError:
         logger.warning("permission denied while checking binary", path=str(file_path))
-        return False  # Asumir no binario
+        return False
     except OSError as e:
         logger.warning("os error while checking binary", path=str(file_path), error=str(e))
-        return False  # Asumir no binario
+        return False
     except Exception as e:
         logger.warning("unexpected error while checking binary", path=str(file_path), error=str(e))
-        return False  # Asumir no binario
+        return False
 
     return False
-
-
-# Podrías añadir aquí otras utilidades relacionadas con archivos si las necesitas.
