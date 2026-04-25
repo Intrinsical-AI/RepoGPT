@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
+import repogpt
 from repogpt.mcp_server import handle_request
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -93,6 +94,8 @@ def _assert_payloads_equivalent(
 def test_mcp_initialize_and_list_tools() -> None:
     initialize = handle_request({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
     assert initialize["result"]["serverInfo"]["name"] == "repogpt"
+    assert initialize["result"]["serverInfo"]["version"] == repogpt.__version__
+    assert repogpt.__version__
 
     listed = handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
     names = {tool["name"] for tool in listed["result"]["tools"]}
@@ -128,6 +131,73 @@ def test_mcp_emit_code_units_matches_cli_output() -> None:
     payload = _extract_content_text(response)
     assert payload["exit_code"] == 2
     assert payload["artifact"] == cli_payload
+
+
+def test_mcp_language_filter_matches_cli_normalization() -> None:
+    cli_run = _run(["--stdout", "--format", "json", "--languages", "py"], CLI_FIXTURE)
+    assert cli_run.returncode == 2
+    cli_payload = json.loads(cli_run.stdout)
+
+    response = handle_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 31,
+            "method": "tools/call",
+            "params": {
+                "name": "repogpt_emit_ast",
+                "arguments": {
+                    "repo_path": str(CLI_FIXTURE),
+                    "languages": [" PY "],
+                },
+            },
+        }
+    )
+
+    payload = _extract_content_text(response)
+    assert payload["exit_code"] == 2
+    assert payload["artifact"] == cli_payload
+
+
+def test_mcp_rejects_unsupported_language_like_cli() -> None:
+    response = handle_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 32,
+            "method": "tools/call",
+            "params": {
+                "name": "repogpt_emit_ast",
+                "arguments": {
+                    "repo_path": str(CLI_FIXTURE),
+                    "languages": ["ts"],
+                },
+            },
+        }
+    )
+
+    assert response["error"]["code"] == -32000
+    assert "unsupported languages: ts; supported: md, py" == response["error"]["message"]
+
+
+def test_mcp_empty_language_filter_collects_nothing() -> None:
+    response = handle_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 33,
+            "method": "tools/call",
+            "params": {
+                "name": "repogpt_emit_ast",
+                "arguments": {
+                    "repo_path": str(CLI_FIXTURE),
+                    "languages": [],
+                },
+            },
+        }
+    )
+
+    payload = _extract_content_text(response)
+    assert payload["exit_code"] == 0
+    assert payload["artifact"]["stats"]["total_files"] == 0
+    assert payload["artifact"]["records"] == []
 
 
 def test_mcp_emit_ast_supports_ndjson() -> None:

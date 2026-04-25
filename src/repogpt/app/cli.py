@@ -10,6 +10,7 @@ import structlog
 from repogpt.adapters.parsers.registry import StaticParserRegistry
 from repogpt.adapters.writers.artifact_writer import ArtifactWriter
 from repogpt.application.exit_codes import exit_code_for_result
+from repogpt.application.languages import UnsupportedLanguagesError, parse_cli_languages
 from repogpt.domain.analysis import AnalysisRequest, OutputTarget
 from repogpt.domain.errors import InvalidRepoError
 from repogpt.runtime import build_analyze_repo
@@ -23,14 +24,6 @@ def _configure_logging(level: str) -> None:
         wrapper_class=structlog.make_filtering_bound_logger(LEVELS[level]),
         logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
     )
-
-
-def _parse_languages_arg(raw_languages: str | None) -> list[str] | None:
-    if raw_languages is None:
-        return None
-    if raw_languages == "":
-        return []
-    return [lang for lang in (s.strip().lower() for s in raw_languages.split(",")) if lang]
 
 
 def main() -> int:  # noqa: D401
@@ -55,16 +48,13 @@ def main() -> int:  # noqa: D401
     log = structlog.get_logger()
     registry = StaticParserRegistry()
 
-    langs = _parse_languages_arg(args.languages)
-    if langs is not None:
-        unsupported = sorted(set(langs) - registry.supported_extensions())
-        if unsupported:
-            parser.error(
-                "unsupported languages: "
-                + ", ".join(unsupported)
-                + "; supported: "
-                + ", ".join(sorted(registry.supported_extensions()))
-            )
+    try:
+        langs = parse_cli_languages(
+            args.languages,
+            supported_extensions=registry.supported_extensions(),
+        )
+    except UnsupportedLanguagesError as exc:
+        parser.error(exc.message)
     if args.emit == "code-units" and args.format != "json":
         parser.error("--emit code-units only supports --format json")
     to_stdout = args.stdout or (args.output and Path(args.output).as_posix() == "/dev/stdout")
