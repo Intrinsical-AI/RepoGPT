@@ -5,6 +5,8 @@ This roadmap starts after the current shipped baseline:
 - CLI and MCP stdio interfaces
 - AST export (`schema_version: "1"`)
 - `code-units` (`schema_version: "4"`)
+- public JSON Schemas for AST v1 and `code-units` v4
+- golden artifact schema validation in integration tests
 - built-in retrieval profile comparison for `flat_rag_v1` and `structured_rag_v1`
 
 The items below are forward-looking only.
@@ -14,7 +16,7 @@ The items below are forward-looking only.
 ### 1. Contract hardening and examples
 
 - add more end-to-end examples for CLI, MCP, and downstream `code-units` consumption
-- tighten contract coverage around edge cases that matter to external consumers
+- extend contract coverage around additional edge cases that matter to external consumers
 - document extension points only where the interfaces are stable enough to maintain
 
 ### 2. Performance evidence before optimization

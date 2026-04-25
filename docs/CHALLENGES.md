@@ -17,15 +17,17 @@ The constraint is to avoid promising a flexible projection system before the lon
 
 Large repositories stress the current runtime in predictable places:
 
-- deterministic collection via full-tree traversal and stable sort
+- deterministic collection via unignored-tree traversal and stable sort
 - Python comment association on deep or dense trees
 - parsing and span extraction for large files
 
 Open questions:
 
-- which bottlenecks deserve dedicated benchmarks first
+- which bottlenecks deserve broader real-repository benchmarks first
 - whether defensive guards are preferable to broad optimization
 - when incremental analysis or caching becomes worth the added complexity
+
+Current synthetic evidence exists for tree traversal, flattening, and Python comment association in `benchmark_tree_utils.py`; larger mixed-repository fixtures remain open work.
 
 ## 3. Parser maturity
 

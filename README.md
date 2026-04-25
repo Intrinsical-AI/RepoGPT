@@ -35,7 +35,7 @@ uv sync
 ```
 
 RepoGPT uses `uv` as the supported local and CI bootstrap path.
-For development validation tools such as `pre-commit`, install the dev extra with `uv sync --extra dev`.
+For development validation tools such as `pre-commit`, `mypy`, and schema tests, install the dev extra with `uv sync --extra dev --locked`.
 
 ## Quick start
 
@@ -72,6 +72,9 @@ Notes:
 - `--emit code-units` only supports `--format json`.
 - Passing `-o /dev/stdout` behaves like `--stdout`.
 - AST JSON uses `records`; `code-units` JSON uses `documents`.
+- `--languages` accepts parser extensions such as `py` and `md`; values are normalized case-insensitively.
+- Unsupported language values fail during argument validation.
+- Passing an empty language filter, such as `--languages ""`, collects no files.
 
 ### Exit codes
 
@@ -161,6 +164,15 @@ Contract notes:
 - `content_hash` is `sha256(content)` for the exact emitted span
 - if a file produces no selected units for its language, the projector falls back to the root module document
 
+### Public JSON Schemas
+
+RepoGPT ships JSON Schema files for the public artifact contracts:
+
+- `schemas/ast-v1.schema.json`: AST JSON envelopes and AST NDJSON record variants
+- `schemas/code-units-v4.schema.json`: `code-units` JSON envelopes
+
+These schemas are contract aids for consumers and tests. They are validated against golden fixtures in the test suite via the dev-only `jsonschema` dependency; RepoGPT does not validate emitted artifacts at runtime.
+
 ## MCP interface
 
 RepoGPT ships a compact MCP server over stdio:
@@ -174,7 +186,8 @@ uv run python -m repogpt.mcp_server
 Transport and envelope:
 
 - protocol: line-delimited JSON-RPC over stdio
-- initialization: `initialize`
+- initialization: `initialize`, returning `protocolVersion: "2024-11-05"` and `serverInfo`
+- server version: `serverInfo.version`, derived from package metadata
 - tool discovery: `tools/list`
 - tool execution: `tools/call`
 - tool results are returned as JSON text content inside the JSON-RPC response
@@ -191,7 +204,17 @@ Tool behavior summary:
 - `repogpt_emit_ast` returns `{"exit_code", "artifact", "stderr"}`
 - `repogpt_compare_profiles` returns `{"exit_code", "comparison", "stderr"}`
 
-`repogpt_compare_profiles` expects a path to an existing `code-units` artifact on disk.
+Tool arguments:
+
+| Tool | Arguments |
+| --- | --- |
+| `repogpt_emit_code_units` | `repo_path` required; optional `include_tests`, `languages`, `fail_fast` |
+| `repogpt_emit_ast` | `repo_path` required; optional `flatten`, `format`, `include_tests`, `languages`, `fail_fast` |
+| `repogpt_compare_profiles` | `artifact_path` and `query` required |
+
+`languages` is an array of parser extensions such as `["py", "md"]`; values are normalized like the CLI. An empty array collects no files. Unsupported values return a JSON-RPC tool error.
+
+`repogpt_compare_profiles` expects a path to an existing `code-units` artifact on disk. The `stderr` field in successful tool payloads is reserved and currently empty; tool failures are returned through the JSON-RPC `error` object, with application-level tool errors using code `-32000`.
 
 Minimal request example:
 
@@ -207,6 +230,15 @@ RepoGPT includes a small benchmark path for comparing two retrieval presets over
 - `structured_rag_v1`: rank documents, keep the same seeds, then add at most one enclosing container hop per seed when available
 
 The benchmark path is intended for contract-level comparison, not as a full retrieval engine or production-quality relevance evaluation.
+
+## Developer benchmark scripts
+
+RepoGPT includes two root-level diagnostic scripts:
+
+- `benchmark_retrieval_profiles.py`: compares `flat_rag_v1` and `structured_rag_v1` over a `code-units` artifact
+- `benchmark_tree_utils.py`: runs synthetic measurements for tree traversal, flattening, and Python comment association
+
+These scripts are developer diagnostics, not public runtime interfaces.
 
 ## Logging and diagnostics
 
@@ -243,7 +275,7 @@ It does not run `pytest`. Run the test suite separately before pushing or openin
 Setup and common commands:
 
 ```bash
-uv sync --extra dev
+uv sync --extra dev --locked
 uv run pre-commit install
 uv run pre-commit run --all-files
 uv run pytest -q
@@ -274,8 +306,11 @@ src/repogpt/
   utils/
   mcp_server.py
   runtime.py
+schemas/
 tests/
 docs/
+benchmark_retrieval_profiles.py
+benchmark_tree_utils.py
 ```
 
 High-level responsibilities:
@@ -300,6 +335,7 @@ Relevant coverage areas:
 - collector behavior and skip rules
 - Python and Markdown parser behavior
 - AST and `code-units` contract stability
+- public schema validation against golden artifacts
 - CLI exit codes and partial-failure semantics
 - MCP parity with CLI outputs
 
@@ -308,6 +344,7 @@ Targeted integration checks:
 ```bash
 uv run pytest -q tests/integration/test_cli_contract.py
 uv run pytest -q tests/integration/test_mcp_server.py
+uv run pytest -q tests/integration/test_artifact_schemas.py
 ```
 
 ## Additional documents
