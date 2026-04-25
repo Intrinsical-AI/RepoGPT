@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://repogpt.local/schemas/ast-v1.schema.json",
+  "title": "RepoGPT AST v1",
+  "anyOf": [
+    { "$ref": "#/$defs/envelope" },
+    { "$ref": "#/$defs/nodeRecord" },
+    { "$ref": "#/$defs/failureRecord" },
+    { "$ref": "#/$defs/summaryRecord" }
+  ],
+  "$defs": {
+    "fileDigest": {
+      "type": "object",
+      "required": ["size", "sha256"],
+      "properties": {
+        "size": { "type": "integer", "minimum": 0 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+      },
+      "additionalProperties": true
+    },
+    "stats": {
+      "type": "object",
+      "required": ["total_files", "ok_files", "failed_files", "emitted_records"],
+      "properties": {
+        "total_files": { "type": "integer", "minimum": 0 },
+        "ok_files": { "type": "integer", "minimum": 0 },
+        "failed_files": { "type": "integer", "minimum": 0 },
+        "emitted_records": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": true
+    },
+    "nodeBase": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "language",
+        "path",
+        "start_line",
+        "end_line",
+        "comments",
+        "tags",
+        "dependencies",
+        "parent_id",
+        "attributes",
+        "metrics"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "type": { "type": "string", "minLength": 1 },
+        "name": { "type": ["string", "null"] },
+        "language": { "type": ["string", "null"] },
+        "path": { "type": ["string", "null"] },
+        "start_line": { "type": ["integer", "null"], "minimum": 1 },
+        "end_line": { "type": ["integer", "null"], "minimum": 1 },
+        "docstring": { "type": ["string", "null"] },
+        "comments": { "type": "array", "items": { "type": "object" } },
+        "tags": { "type": "array", "items": { "type": "string" } },
+        "dependencies": { "type": "array" },
+        "parent_id": { "type": ["string", "null"] },
+        "children": { "type": "array" },
+        "attributes": { "type": "object" },
+        "metrics": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "nodeRecord": {
+      "allOf": [
+        { "$ref": "#/$defs/nodeBase" },
+        {
+          "type": "object",
+          "required": ["record_type", "schema_version", "file"],
+          "properties": {
+            "record_type": { "const": "node" },
+            "schema_version": { "const": "1" },
+            "file": { "$ref": "#/$defs/fileDigest" }
+          }
+        }
+      ]
+    },
+    "failureRecord": {
+      "type": "object",
+      "required": ["record_type", "schema_version", "path", "language", "error", "file"],
+      "properties": {
+        "record_type": { "const": "failure" },
+        "schema_version": { "const": "1" },
+        "path": { "type": "string" },
+        "language": { "type": "string" },
+        "error": { "type": "string" },
+        "file": { "$ref": "#/$defs/fileDigest" }
+      },
+      "additionalProperties": true
+    },
+    "summaryRecord": {
+      "type": "object",
+      "required": ["record_type", "schema_version", "repo_root", "stats"],
+      "properties": {
+        "record_type": { "const": "summary" },
+        "schema_version": { "const": "1" },
+        "repo_root": { "type": "string" },
+        "stats": { "$ref": "#/$defs/stats" }
+      },
+      "additionalProperties": true
+    },
+    "envelope": {
+      "type": "object",
+      "required": ["schema_version", "repo_root", "stats", "failures", "records"],
+      "properties": {
+        "schema_version": { "const": "1" },
+        "repo_root": { "type": "string" },
+        "stats": { "$ref": "#/$defs/stats" },
+        "failures": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/failureRecord" }
+        },
+        "records": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/nodeRecord" }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
