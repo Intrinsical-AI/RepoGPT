@@ -65,6 +65,7 @@ Entry point:
 Transport:
 
 - line-delimited JSON-RPC over stdio
+- initialization returns protocol version `2024-11-05` and package-derived server metadata
 
 Built-in tools:
 
@@ -72,7 +73,7 @@ Built-in tools:
 - `repogpt_emit_ast`
 - `repogpt_compare_profiles`
 
-The MCP server reuses the same analysis runtime as the CLI. It does not introduce a separate artifact contract.
+The MCP server reuses the same analysis runtime and language-filter validation semantics as the CLI. It does not introduce a separate artifact contract. Successful tool payloads include a reserved `stderr` field that is currently empty; tool failures are reported through JSON-RPC errors.
 
 ## 4. Domain and projection model
 
@@ -126,6 +127,10 @@ NDJSON record types:
 - `failure`
 - `summary`
 
+Schema file:
+
+- `schemas/ast-v1.schema.json`
+
 ### 5.2 Code-units (`schema_version: "4"`)
 
 `code-units` is the retrieval-oriented projection.
@@ -171,6 +176,12 @@ Contract notes:
 - canonical retrieval fields are duplicated under `metadata` for generic downstream filters/importers
 - if a file yields no selected symbol or container units for its language, the projector falls back to the root module document
 
+Schema file:
+
+- `schemas/code-units-v4.schema.json`
+
+The schema files are public contract validation helpers. They are validated against golden fixtures in tests and are not part of runtime artifact emission.
+
 ## 6. Retrieval profile semantics
 
 RepoGPT includes lightweight retrieval helpers over `code-units`. These are interoperability helpers, not a built-in production retrieval engine.
@@ -208,7 +219,7 @@ Collection behavior is deterministic and currently includes:
 - canonical relative-path sort
 - built-in ignore directories/files
 - optional `.repogptignore`
-- silent pruning for ignored directories before descent
+- silent pruning for ignored directories before descent; ignored directory contents are not expanded into skipped-file records
 - test exclusion by default
 - file-size guard
 - binary-file detection
@@ -274,7 +285,7 @@ Observability today:
 
 Known operational boundaries:
 
-- full-tree collection cost grows with filesystem size
+- unignored-tree collection cost grows with filesystem size
 - Python comment association can become expensive on deep trees with dense comments
 - large files increase parser and span-extraction cost
 
