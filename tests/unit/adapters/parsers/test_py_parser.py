@@ -16,7 +16,6 @@ def _loaded_file(filename: str) -> LoadedFile:
     raw = path.read_bytes()
     return LoadedFile(
         collected_file=CollectedFile(abs_path=path, relative_path=filename, language="py"),
-        raw_bytes=raw,
         text=raw.decode("utf-8", errors="replace"),
         digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
     )
@@ -78,7 +77,6 @@ def test_python_import_and_signature_semantics(tmp_path: Path) -> None:
                 relative_path="tmp_imports.py",
                 language="py",
             ),
-            raw_bytes=raw,
             text=content,
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
         )
@@ -96,8 +94,7 @@ def test_python_import_and_signature_semantics(tmp_path: Path) -> None:
     assert function.attributes["returns"] == "str"
     assert function.attributes["visibility"] == "public"
     assert (
-        function.attributes["signature"]
-        == "foo(a: int, /, b = 'x', *, c: str = 'y', **kwargs) -> str"
+        function.attributes["signature"] == "foo(a: int, /, b='x', *, c: str='y', **kwargs) -> str"
     )
 
 
@@ -119,7 +116,6 @@ def test_python_signature_with_vararg_and_keyword_only_is_valid(tmp_path: Path) 
                 relative_path="tmp_signature.py",
                 language="py",
             ),
-            raw_bytes=raw,
             text=content,
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
         )
@@ -153,7 +149,6 @@ def test_python_module_end_line_handles_trailing_newline(tmp_path: Path) -> None
                 relative_path="trailing.py",
                 language="py",
             ),
-            raw_bytes=raw,
             text=content,
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
         )

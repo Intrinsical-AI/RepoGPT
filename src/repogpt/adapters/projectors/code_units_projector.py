@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from typing import Any
 
@@ -9,6 +10,7 @@ from repogpt.domain.analysis import AnalysisRequest, AnalysisResult, CodeUnitsPr
 from repogpt.domain.files import ParsedFile
 from repogpt.domain.nodes import CodeNode
 from repogpt.ports.projectors import CodeUnitsProjectorPort
+from repogpt.utils.text_processing import physical_lines
 from repogpt.utils.tree_utils import iter_nodes
 
 SCHEMA_VERSION = "4"
@@ -45,8 +47,11 @@ def _content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def _join_symbol_path(parts: list[str]) -> str:
-    return ".".join(part for part in parts if part)
+def resolve_repo_key(request: AnalysisRequest) -> str:
+    if request.repo_key is not None:
+        return request.repo_key
+    canonical_path = os.path.normcase(str(request.repo_root.resolve()))
+    return "local-" + hashlib.sha256(os.fsencode(canonical_path)).hexdigest()
 
 
 def _module_external_id(*, repo_key: str, relative_path: str) -> str:
@@ -57,51 +62,9 @@ def _markdown_segment(value: str | None) -> str:
     return _slugify(value or "section")
 
 
-def _queryable_metadata(
-    *,
-    repo_key: str,
-    path: str,
-    language: str | None,
-    unit_type: str,
-    unit_level: str,
-    symbol: str | None,
-    qualified_name: str,
-    container_id: str,
-    depth: int,
-    ancestor_path: list[str],
-    start_line: int | None,
-    end_line: int | None,
-    content_hash: str,
-    docstring_present: bool,
-    has_children: bool,
-) -> dict[str, Any]:
-    values = {
-        "repo_key": repo_key,
-        "path": path,
-        "language": language,
-        "unit_type": unit_type,
-        "unit_level": unit_level,
-        "symbol": symbol,
-        "qualified_name": qualified_name,
-        "container_id": container_id,
-        "depth": depth,
-        "ancestor_path": ancestor_path,
-        "start_line": start_line,
-        "end_line": end_line,
-        "content_hash": content_hash,
-        "docstring_present": docstring_present,
-        "has_children": has_children,
-    }
-    return {
-        key: value
-        for key, value in values.items()
-        if value is not None and (not isinstance(value, str) or value.strip())
-    }
-
-
 class CodeUnitsProjector(CodeUnitsProjectorPort):
     def project(self, result: AnalysisResult, request: AnalysisRequest) -> CodeUnitsProjection:
-        repo_key = _slugify(request.repo_root.name)
+        repo_key = resolve_repo_key(request)
         scope = f"repogpt:{repo_key}"
         snapshot_id = self._snapshot_id(parsed_files=result.parsed_files, repo_key=repo_key)
         ok_files = [
@@ -122,6 +85,9 @@ class CodeUnitsProjector(CodeUnitsProjectorPort):
                 snapshot_id=snapshot_id,
             )
         ]
+        external_ids = [document["external_id"] for document in documents]
+        if len(external_ids) != len(set(external_ids)):
+            raise ValueError("Duplicate external IDs; refusing to emit an ambiguous artifact")
         return CodeUnitsProjection(
             schema_version=SCHEMA_VERSION,
             json_payload={
@@ -130,7 +96,7 @@ class CodeUnitsProjector(CodeUnitsProjectorPort):
                 "repo_key": repo_key,
                 "snapshot_id": snapshot_id,
                 "scope": scope,
-                "replace_scope": True,
+                "replace_scope": request.replace_scope,
                 "stats": {
                     "total_files": result.stats.total_files,
                     "ok_files": result.stats.ok_files,
@@ -170,17 +136,11 @@ class CodeUnitsProjector(CodeUnitsProjectorPort):
         if not selected:
             return []
         source_id = f"repogpt:{repo_key}:file:{parsed_file.relative_path}"
-        lines = parsed_file.text.splitlines(keepends=True)
+        lines = physical_lines(parsed_file.text, keepends=True)
         nodes = {node.id: node for node in iter_nodes(parsed_file.root)}
-        external_ids = self._external_ids_for_selected(
+        external_ids, qualified_names = self._identities(
             root=parsed_file.root,
-            selected=selected,
             repo_key=repo_key,
-            relative_path=parsed_file.relative_path,
-        )
-        qualified_names = self._qualified_names_for_selected(
-            root=parsed_file.root,
-            selected=selected,
             relative_path=parsed_file.relative_path,
         )
         docs: list[dict[str, Any]] = []
@@ -227,23 +187,6 @@ class CodeUnitsProjector(CodeUnitsProjectorPort):
                     "docstring_present": docstring_present,
                     "has_children": has_children,
                     "metadata": {
-                        **_queryable_metadata(
-                            repo_key=repo_key,
-                            path=parsed_file.relative_path,
-                            language=node.language,
-                            unit_type=node.type,
-                            unit_level=unit_level,
-                            symbol=node.name,
-                            qualified_name=qualified_name,
-                            container_id=container_id,
-                            depth=depth,
-                            ancestor_path=ancestor_path,
-                            start_line=node.start_line,
-                            end_line=node.end_line,
-                            content_hash=content_hash,
-                            docstring_present=docstring_present,
-                            has_children=has_children,
-                        ),
                         "file": {
                             "sha256": parsed_file.digest.sha256,
                             "size": parsed_file.digest.size,
@@ -266,213 +209,62 @@ class CodeUnitsProjector(CodeUnitsProjectorPort):
             return selected or [root]
         return [root]
 
-    def _external_ids_for_selected(
+    def _identities(
         self,
         *,
         root: CodeNode,
-        selected: list[CodeNode],
         repo_key: str,
         relative_path: str,
-    ) -> dict[str, str]:
-        if root.language == "py":
-            return self._python_external_ids(
-                root=root,
-                selected=selected,
-                repo_key=repo_key,
-                relative_path=relative_path,
-            )
-        if root.language == "md":
-            return self._markdown_external_ids(
-                root=root,
-                selected=selected,
-                repo_key=repo_key,
-                relative_path=relative_path,
-            )
-        return {
-            node.id: _module_external_id(repo_key=repo_key, relative_path=relative_path)
-            for node in selected
-        }
-
-    def _qualified_names_for_selected(
-        self,
-        *,
-        root: CodeNode,
-        selected: list[CodeNode],
-        relative_path: str,
-    ) -> dict[str, str]:
-        if root.language == "py":
-            return self._python_qualified_names(
-                root=root,
-                selected=selected,
-                relative_path=relative_path,
-            )
-        if root.language == "md":
-            return self._markdown_qualified_names(
-                root=root,
-                selected=selected,
-                relative_path=relative_path,
-            )
-        names = {node.id: node.name or relative_path for node in selected}
-        names[root.id] = relative_path
-        return names
-
-    def _python_external_ids(
-        self,
-        *,
-        root: CodeNode,
-        selected: list[CodeNode],
-        repo_key: str,
-        relative_path: str,
-    ) -> dict[str, str]:
-        nodes = {node.id: node for node in iter_nodes(root)}
-        selected_ids = {node.id for node in selected}
-        external_ids: dict[str, str] = {
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        """Assign IDs and names together so ancestry uses the same disambiguation."""
+        prefix = f"repogpt:{repo_key}:{relative_path}"
+        external_ids = {
             root.id: _module_external_id(repo_key=repo_key, relative_path=relative_path)
         }
-        for node in selected:
-            if node.type == "module":
-                external_ids[node.id] = _module_external_id(
-                    repo_key=repo_key,
-                    relative_path=relative_path,
-                )
-                continue
-            symbol_parts: list[str] = []
-            current = node
-            while True:
-                if current.name and current.type in {"class", "function", "method"}:
-                    symbol_parts.append(current.name)
-                if current.parent_id is None:
-                    break
-                parent = nodes.get(current.parent_id)
-                if parent is None:
-                    break
-                current = parent
-                if current.id not in selected_ids and current.type == "module":
-                    break
-            qualified_symbol = _join_symbol_path(list(reversed(symbol_parts))) or (node.name or "")
-            external_ids[node.id] = (
-                f"repogpt:{repo_key}:{relative_path}:{node.type}:{qualified_symbol}"
-            )
-        return external_ids
-
-    def _python_qualified_names(
-        self,
-        *,
-        root: CodeNode,
-        selected: list[CodeNode],
-        relative_path: str,
-    ) -> dict[str, str]:
-        nodes = {node.id: node for node in iter_nodes(root)}
-        qualified_names = {root.id: relative_path}
-        for node in selected:
-            if node.type == "module":
-                qualified_names[node.id] = relative_path
-                continue
-            symbol_parts: list[str] = []
-            current = node
-            while True:
-                if current.name and current.type in {"class", "function", "method"}:
-                    symbol_parts.append(current.name)
-                if current.parent_id is None:
-                    break
-                parent = nodes.get(current.parent_id)
-                if parent is None:
-                    break
-                current = parent
-                if current.type == "module":
-                    break
-            qualified_names[node.id] = (
-                _join_symbol_path(list(reversed(symbol_parts))) or relative_path
-            )
-        return qualified_names
-
-    def _markdown_external_ids(
-        self,
-        *,
-        root: CodeNode,
-        selected: list[CodeNode],
-        repo_key: str,
-        relative_path: str,
-    ) -> dict[str, str]:
-        selected_ids = {node.id for node in selected}
-        external_ids: dict[str, str] = {
-            root.id: _module_external_id(repo_key=repo_key, relative_path=relative_path)
-        }
+        names = {root.id: relative_path}
         code_block_ordinals: dict[str, int] = {}
 
-        def walk(
-            node: CodeNode,
-            *,
-            current_heading_path: str | None,
-        ) -> None:
-            heading_slug_counts: dict[str, int] = {}
-            for child in node.children:
-                next_heading_path = current_heading_path
-                if child.type == "heading":
-                    segment_base = _markdown_segment(child.name)
-                    heading_slug_counts[segment_base] = heading_slug_counts.get(segment_base, 0) + 1
-                    ordinal = heading_slug_counts[segment_base]
-                    segment = segment_base if ordinal == 1 else f"{segment_base}-{ordinal}"
-                    next_heading_path = (
-                        f"{current_heading_path}/{segment}" if current_heading_path else segment
-                    )
-                    if child.id in selected_ids:
-                        external_ids[child.id] = (
-                            f"repogpt:{repo_key}:{relative_path}:heading:{next_heading_path}"
-                        )
+        def walk(parent: CodeNode, context: str) -> None:
+            declaration_counts: dict[str, int] = {}
+            reserved = {
+                _markdown_segment(child.name)
+                for child in parent.children
+                if child.type == "heading"
+            }
+            used: set[str] = set()
+            for child in parent.children:
+                next_context = context
+                if root.language == "py" and child.type in {"class", "function", "method"}:
+                    base = child.name or ""
+                    ordinal = declaration_counts.get(base, 0) + 1
+                    declaration_counts[base] = ordinal
+                    segment = base if ordinal == 1 else f"{base}~{ordinal}"
+                    next_context = f"{context}.{segment}" if context else segment
+                    names[child.id] = next_context
+                    external_ids[child.id] = f"{prefix}:{child.type}:{next_context}"
+                elif child.type == "heading":
+                    base = _markdown_segment(child.name)
+                    segment = base
+                    if segment in used:
+                        ordinal = 2
+                        segment = f"{base}-{ordinal}"
+                        while segment in used or segment in reserved:
+                            ordinal += 1
+                            segment = f"{base}-{ordinal}"
+                    used.add(segment)
+                    next_context = f"{context}/{segment}" if context else segment
+                    names[child.id] = next_context
+                    external_ids[child.id] = f"{prefix}:heading:{next_context}"
                 elif child.type == "code_block":
-                    section_path = current_heading_path or "root"
-                    code_block_ordinals[section_path] = code_block_ordinals.get(section_path, 0) + 1
-                    if child.id in selected_ids:
-                        external_ids[child.id] = (
-                            f"repogpt:{repo_key}:{relative_path}:code_block:"
-                            f"{section_path}:{code_block_ordinals[section_path]}"
-                        )
-                walk(child, current_heading_path=next_heading_path)
+                    section = context or "root"
+                    ordinal = code_block_ordinals.get(section, 0) + 1
+                    code_block_ordinals[section] = ordinal
+                    names[child.id] = f"{section}/code_block[{ordinal}]"
+                    external_ids[child.id] = f"{prefix}:code_block:{section}:{ordinal}"
+                walk(child, next_context)
 
-        walk(root, current_heading_path=None)
-        return external_ids
-
-    def _markdown_qualified_names(
-        self,
-        *,
-        root: CodeNode,
-        selected: list[CodeNode],
-        relative_path: str,
-    ) -> dict[str, str]:
-        selected_ids = {node.id for node in selected}
-        qualified_names: dict[str, str] = {root.id: relative_path}
-        code_block_ordinals: dict[str, int] = {}
-
-        def walk(
-            node: CodeNode,
-            *,
-            current_heading_path: str | None,
-        ) -> None:
-            heading_slug_counts: dict[str, int] = {}
-            for child in node.children:
-                next_heading_path = current_heading_path
-                if child.type == "heading":
-                    segment_base = _markdown_segment(child.name)
-                    heading_slug_counts[segment_base] = heading_slug_counts.get(segment_base, 0) + 1
-                    ordinal = heading_slug_counts[segment_base]
-                    segment = segment_base if ordinal == 1 else f"{segment_base}-{ordinal}"
-                    next_heading_path = (
-                        f"{current_heading_path}/{segment}" if current_heading_path else segment
-                    )
-                    if child.id in selected_ids:
-                        qualified_names[child.id] = next_heading_path
-                elif child.type == "code_block":
-                    section_path = current_heading_path or "root"
-                    code_block_ordinals[section_path] = code_block_ordinals.get(section_path, 0) + 1
-                    if child.id in selected_ids:
-                        qualified_names[child.id] = (
-                            f"{section_path}/code_block[{code_block_ordinals[section_path]}]"
-                        )
-                walk(child, current_heading_path=next_heading_path)
-
-        walk(root, current_heading_path=None)
-        return qualified_names
+        walk(root, "")
+        return external_ids, names
 
     def _unit_level(self, node: CodeNode) -> str:
         return "container" if node.type in CONTAINER_TYPES else "symbol"

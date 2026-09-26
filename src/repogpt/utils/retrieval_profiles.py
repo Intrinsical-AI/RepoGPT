@@ -4,6 +4,11 @@ import re
 from typing import Any
 
 
+def validate_top_k(top_k: int) -> None:
+    if type(top_k) is not int or top_k < 0:
+        raise ValueError("top_k must be an integer >= 0")
+
+
 def _tokenize(text: str) -> set[str]:
     return {token for token in re.findall(r"[a-z0-9_]+", text.lower()) if token}
 
@@ -48,6 +53,7 @@ def assemble_flat_bundle(
     query_text: str,
     top_k: int = 3,
 ) -> dict[str, Any]:
+    validate_top_k(top_k)
     ranked = rank_documents(documents, query_text)
     items = ranked[:top_k]
     return {
@@ -66,8 +72,17 @@ def assemble_structured_bundle(
     query_text: str,
     top_k: int = 3,
 ) -> dict[str, Any]:
-    ranked = rank_documents(documents, query_text)
-    seeds = ranked[:top_k]
+    validate_top_k(top_k)
+    seeds = rank_documents(documents, query_text)[:top_k]
+    return _expand_bundle(documents, seeds, query_text=query_text)
+
+
+def _expand_bundle(
+    documents: list[dict[str, Any]],
+    seeds: list[dict[str, Any]],
+    *,
+    query_text: str,
+) -> dict[str, Any]:
     by_external_id = {
         str(document.get("external_id")): document
         for document in documents
@@ -107,20 +122,17 @@ def compare_profiles(
     top_k: int = 3,
 ) -> dict[str, Any]:
     flat = assemble_flat_bundle(documents, query_text=query_text, top_k=top_k)
-    structured = assemble_structured_bundle(documents, query_text=query_text, top_k=top_k)
+    structured = _expand_bundle(documents, flat["items"], query_text=query_text)
     return {
         "query_text": query_text,
         "top_k": top_k,
-        "flat_rag_v1": {
-            "seed_count": flat["seed_count"],
-            "expanded_count": flat["expanded_count"],
-            "estimated_tokens": flat["estimated_tokens"],
-            "external_ids": [item["external_id"] for item in flat["items"]],
-        },
-        "structured_rag_v1": {
-            "seed_count": structured["seed_count"],
-            "expanded_count": structured["expanded_count"],
-            "estimated_tokens": structured["estimated_tokens"],
-            "external_ids": [item["external_id"] for item in structured["items"]],
+        **{
+            bundle["profile"]: {
+                "seed_count": bundle["seed_count"],
+                "expanded_count": bundle["expanded_count"],
+                "estimated_tokens": bundle["estimated_tokens"],
+                "external_ids": [item["external_id"] for item in bundle["items"]],
+            }
+            for bundle in (flat, structured)
         },
     }

@@ -10,7 +10,7 @@ from repogpt.domain.files import LoadedFile
 from repogpt.domain.nodes import CodeNode
 from repogpt.ports.parsers import ParserPort
 from repogpt.utils.node_utils import stable_node_id
-from repogpt.utils.text_processing import count_blank_lines, extract_comments
+from repogpt.utils.text_processing import count_blank_lines, extract_comments, physical_lines
 
 logger = structlog.get_logger(__name__)
 
@@ -21,7 +21,8 @@ class PythonParser(ParserPort):
         content = loaded_file.text
         tree = ast.parse(content, filename=str(path))
         relative_path = loaded_file.relative_path
-        total_lines = len(content.splitlines()) or 1
+        lines = physical_lines(content)
+        total_lines = len(lines) or 1
 
         root = CodeNode(
             id=stable_node_id(
@@ -41,7 +42,7 @@ class PythonParser(ParserPort):
             docstring=ast.get_docstring(tree),
             metrics={
                 "blank_lines": count_blank_lines(content),
-                "non_empty_lines": len([line for line in content.splitlines() if line.strip()]),
+                "non_empty_lines": sum(bool(line.strip()) for line in lines),
             },
             attributes={"relative_path": relative_path},
         )
@@ -64,22 +65,23 @@ class PythonParser(ParserPort):
                 relative_path=relative_path,
             )
             if code_node is None:
-                nested_nodes = getattr(child, "body", None)
-                if isinstance(nested_nodes, list):
-                    self._visit_sequence(
-                        nested_nodes,
-                        parent_node=parent_node,
-                        relative_path=relative_path,
-                    )
-                continue
-            parent_node.children.append(code_node)
-            nested_nodes = getattr(child, "body", None)
-            if isinstance(nested_nodes, list):
-                self._visit_sequence(
-                    nested_nodes,
-                    parent_node=code_node,
-                    relative_path=relative_path,
-                )
+                nested_parent = parent_node
+            else:
+                parent_node.children.append(code_node)
+                nested_parent = code_node
+            nested_nodes = self._block_statements(child)
+            self._visit_sequence(
+                nested_nodes, parent_node=nested_parent, relative_path=relative_path
+            )
+
+    def _block_statements(self, node: ast.AST) -> list[ast.stmt]:
+        statements: list[ast.stmt] = []
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.stmt):
+                statements.append(child)
+            elif isinstance(child, ast.ExceptHandler | ast.match_case):
+                statements.extend(self._block_statements(child))
+        return sorted(statements, key=lambda statement: (statement.lineno, statement.col_offset))
 
     def _build_node(
         self,
@@ -93,9 +95,10 @@ class PythonParser(ParserPort):
                 module=None,
                 aliases=node.names,
                 import_kind="import",
-                is_relative=False,
+                import_level=0,
                 lineno=node.lineno,
                 end_lineno=getattr(node, "end_lineno", node.lineno),
+                col_offset=node.col_offset,
                 parent_node=parent_node,
                 relative_path=relative_path,
             )
@@ -104,9 +107,10 @@ class PythonParser(ParserPort):
                 module=node.module,
                 aliases=node.names,
                 import_kind="from",
-                is_relative=bool(node.level),
+                import_level=node.level,
                 lineno=node.lineno,
                 end_lineno=getattr(node, "end_lineno", node.lineno),
+                col_offset=node.col_offset,
                 parent_node=parent_node,
                 relative_path=relative_path,
             )
@@ -130,9 +134,10 @@ class PythonParser(ParserPort):
         module: str | None,
         aliases: Sequence[ast.alias],
         import_kind: str,
-        is_relative: bool,
+        import_level: int,
         lineno: int,
         end_lineno: int,
+        col_offset: int,
         parent_node: CodeNode,
         relative_path: str,
     ) -> CodeNode:
@@ -142,7 +147,8 @@ class PythonParser(ParserPort):
         attributes = {
             "module": module,
             "import_kind": import_kind,
-            "is_relative": is_relative,
+            "is_relative": bool(import_level),
+            "import_level": import_level,
             "imported_names": imported_names,
         }
         return CodeNode(
@@ -153,6 +159,7 @@ class PythonParser(ParserPort):
                 start_line=lineno,
                 end_line=end_lineno,
                 parent_id=parent_node.id,
+                start_column=col_offset,
             ),
             type="import",
             name=module or None,
@@ -204,7 +211,10 @@ class PythonParser(ParserPort):
     ) -> CodeNode:
         node_type = "method" if parent_node.type == "class" else "function"
         params = self._extract_params(node.args)
-        signature = self._build_signature(node.name, params, node.returns)
+        returns = self._expr_to_source(node.returns)
+        signature = f"{node.name}({ast.unparse(node.args)})"
+        if returns:
+            signature = f"{signature} -> {returns}"
         return CodeNode(
             id=stable_node_id(
                 path=relative_path,
@@ -226,7 +236,7 @@ class PythonParser(ParserPort):
                 "is_async": isinstance(node, ast.AsyncFunctionDef),
                 "decorators": [self._expr_to_source(dec) for dec in node.decorator_list],
                 "params": params,
-                "returns": self._expr_to_source(node.returns),
+                "returns": returns,
                 "visibility": self._visibility(node.name),
                 "signature": signature,
             },
@@ -238,7 +248,7 @@ class PythonParser(ParserPort):
         defaults_offset = len(positional) - len(args.defaults)
         for index, arg in enumerate(positional):
             default = None
-            if index >= defaults_offset and args.defaults:
+            if index >= defaults_offset:
                 default = self._expr_to_source(args.defaults[index - defaults_offset])
             params.append(
                 {
@@ -277,48 +287,6 @@ class PythonParser(ParserPort):
                 }
             )
         return params
-
-    def _build_signature(
-        self,
-        name: str,
-        extracted_params: list[dict[str, Any]],
-        returns_expr: ast.AST | None,
-    ) -> str:
-        params: list[str] = []
-        saw_posonly = False
-        saw_vararg = False
-        inserted_kwonly_separator = False
-        for param in extracted_params:
-            if param["kind"] == "positional_only":
-                saw_posonly = True
-            elif saw_posonly:
-                params.append("/")
-                saw_posonly = False
-            rendered = str(param["name"])
-            annotation = param["annotation"]
-            default = param["default"]
-            if param["kind"] == "vararg":
-                rendered = f"*{rendered}"
-                saw_vararg = True
-            elif param["kind"] == "kwarg":
-                rendered = f"**{rendered}"
-            elif (
-                param["kind"] == "keyword_only" and not saw_vararg and not inserted_kwonly_separator
-            ):
-                params.append("*")
-                inserted_kwonly_separator = True
-            if annotation:
-                rendered = f"{rendered}: {annotation}"
-            if default is not None:
-                rendered = f"{rendered} = {default}"
-            params.append(rendered)
-        if saw_posonly:
-            params.append("/")
-        signature = f"{name}({', '.join(params)})"
-        returns = self._expr_to_source(returns_expr)
-        if returns:
-            signature = f"{signature} -> {returns}"
-        return signature
 
     def _expr_to_source(self, expr: ast.AST | None) -> str | None:
         if expr is None:

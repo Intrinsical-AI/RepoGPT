@@ -4,9 +4,14 @@ from repogpt.domain.analysis import (
     AnalysisStats,
     AstProjection,
     CodeUnitsProjection,
-    OutputTarget,
 )
-from repogpt.domain.errors import CollectionFailure, InvalidRepoError, ParseFailure
+from repogpt.domain.errors import (
+    CollectionFailure,
+    InvalidRepoError,
+    InvalidRequestError,
+    ParseFailure,
+    UnsafeReplacementError,
+)
 from repogpt.domain.files import CollectedFile, FileDigest, LoadedFile, ParsedFile, SkippedFile
 from repogpt.domain.nodes import CodeNode, NodeId
 
@@ -21,10 +26,11 @@ __all__ = [
     "CodeNode",
     "FileDigest",
     "InvalidRepoError",
+    "InvalidRequestError",
     "LoadedFile",
     "NodeId",
-    "OutputTarget",
     "ParseFailure",
     "ParsedFile",
     "SkippedFile",
+    "UnsafeReplacementError",
 ]

@@ -26,7 +26,6 @@ def _python_parsed_file(tmp_path: Path, filename: str, content: str) -> ParsedFi
     raw = content.encode("utf-8")
     loaded = LoadedFile(
         collected_file=CollectedFile(abs_path=sample, relative_path=filename, language="py"),
-        raw_bytes=raw,
         text=content,
         digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
     )
@@ -39,7 +38,6 @@ def _markdown_parsed_file(tmp_path: Path, filename: str, content: str) -> Parsed
     raw = content.encode("utf-8")
     loaded = LoadedFile(
         collected_file=CollectedFile(abs_path=sample, relative_path=filename, language="md"),
-        raw_bytes=raw,
         text=content,
         digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
     )
@@ -62,7 +60,7 @@ def test_code_units_projection_contains_documents(tmp_path: Path) -> None:
     result = AnalysisResult(
         parsed_files=[parsed_file],
         skipped_files=[],
-        stats=AnalysisStats(total_files=1, ok_files=1, failed_files=0, skipped_files=0),
+        stats=AnalysisStats(total_files=1, ok_files=1, failed_files=0),
     )
 
     projection = CodeUnitsProjector().project(result, AnalysisRequest(repo_root=tmp_path))
@@ -70,15 +68,15 @@ def test_code_units_projection_contains_documents(tmp_path: Path) -> None:
 
     assert payload["schema_version"] == "4"
     assert payload["kind"] == "code-units"
-    assert payload["replace_scope"] is True
+    assert payload["replace_scope"] is False
     assert [doc["unit_type"] for doc in payload["documents"]] == ["class", "method", "function"]
     assert payload["documents"][1]["external_id"] == (
-        f"repogpt:{tmp_path.name.lower()}:sample.py:method:Demo.method"
+        f"repogpt:{payload['repo_key']}:sample.py:method:Demo.method"
     )
     assert payload["documents"][0]["unit_level"] == "container"
     assert payload["documents"][0]["qualified_name"] == "Demo"
     assert payload["documents"][0]["container_id"] == (
-        f"repogpt:{tmp_path.name.lower()}:sample.py:module"
+        f"repogpt:{payload['repo_key']}:sample.py:module"
     )
     assert payload["documents"][1]["unit_level"] == "symbol"
     assert payload["documents"][1]["qualified_name"] == "Demo.method"
@@ -95,7 +93,6 @@ def test_code_units_projection_uses_loaded_file_snapshot(tmp_path: Path) -> None
     raw = original.encode("utf-8")
     loaded = LoadedFile(
         collected_file=CollectedFile(abs_path=sample, relative_path="sample.py", language="py"),
-        raw_bytes=raw,
         text=original,
         digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
     )
@@ -104,7 +101,7 @@ def test_code_units_projection_uses_loaded_file_snapshot(tmp_path: Path) -> None
     result = AnalysisResult(
         parsed_files=[parsed_file],
         skipped_files=[],
-        stats=AnalysisStats(total_files=1, ok_files=1, failed_files=0, skipped_files=0),
+        stats=AnalysisStats(total_files=1, ok_files=1, failed_files=0),
     )
 
     payload = CodeUnitsProjector().project(result, AnalysisRequest(repo_root=tmp_path)).json_payload
@@ -119,7 +116,6 @@ def test_code_units_projection_failure_records_include_record_type(tmp_path: Pat
     parsed_file = ParsedFile(
         loaded_file=LoadedFile(
             collected_file=CollectedFile(abs_path=sample, relative_path="sample.py", language="py"),
-            raw_bytes=raw,
             text="x=1\n",
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
         ),
@@ -129,7 +125,7 @@ def test_code_units_projection_failure_records_include_record_type(tmp_path: Pat
     result = AnalysisResult(
         parsed_files=[parsed_file],
         skipped_files=[],
-        stats=AnalysisStats(total_files=1, ok_files=0, failed_files=1, skipped_files=0),
+        stats=AnalysisStats(total_files=1, ok_files=0, failed_files=1),
     )
 
     payload = CodeUnitsProjector().project(result, AnalysisRequest(repo_root=tmp_path)).json_payload
@@ -143,7 +139,7 @@ def test_code_units_projection_markdown_falls_back_to_module(tmp_path: Path) -> 
     result = AnalysisResult(
         parsed_files=[parsed_file],
         skipped_files=[],
-        stats=AnalysisStats(total_files=1, ok_files=1, failed_files=0, skipped_files=0),
+        stats=AnalysisStats(total_files=1, ok_files=1, failed_files=0),
     )
 
     payload = CodeUnitsProjector().project(result, AnalysisRequest(repo_root=tmp_path)).json_payload
@@ -179,7 +175,7 @@ def outer_helper():
             AnalysisResult(
                 parsed_files=[parsed_file],
                 skipped_files=[],
-                stats=AnalysisStats(total_files=1, ok_files=1, failed_files=0, skipped_files=0),
+                stats=AnalysisStats(total_files=1, ok_files=1, failed_files=0),
             ),
             AnalysisRequest(repo_root=tmp_path),
         )
@@ -221,7 +217,7 @@ def test_code_units_projection_markdown_duplicate_headings_are_ordinalized(tmp_p
             AnalysisResult(
                 parsed_files=[parsed_file],
                 skipped_files=[],
-                stats=AnalysisStats(total_files=1, ok_files=1, failed_files=0, skipped_files=0),
+                stats=AnalysisStats(total_files=1, ok_files=1, failed_files=0),
             ),
             AnalysisRequest(repo_root=tmp_path),
         )
@@ -238,11 +234,11 @@ def test_code_units_projection_markdown_duplicate_headings_are_ordinalized(tmp_p
     assert "title/details-3" in heading_names
 
 
-def test_code_units_projection_is_stable_with_unicode_path_and_invalid_utf8_content(
+def test_code_units_projection_is_stable_with_unicode_path_and_content(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "códigö.py"
-    content = b"def hello() -> str:\n    # saludo\xff\n    return 'ok'\n"
+    content = "def hello() -> str:\n    # salutación\n    return 'ok'\n".encode()
     path.write_bytes(content)
     raw = path.read_bytes()
 
@@ -252,15 +248,14 @@ def test_code_units_projection_is_stable_with_unicode_path_and_invalid_utf8_cont
             relative_path=path.name,
             language="py",
         ),
-        raw_bytes=raw,
-        text=raw.decode("utf-8", errors="replace"),
+        text=raw.decode("utf-8"),
         digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
     )
     parsed_file = ParsedFile(loaded_file=sample, root=PythonParser().parse(sample))
     result = AnalysisResult(
         parsed_files=[parsed_file],
         skipped_files=[],
-        stats=AnalysisStats(total_files=1, ok_files=1, failed_files=0, skipped_files=0),
+        stats=AnalysisStats(total_files=1, ok_files=1, failed_files=0),
     )
 
     first_request = AnalysisRequest(repo_root=tmp_path)
@@ -274,4 +269,4 @@ def test_code_units_projection_is_stable_with_unicode_path_and_invalid_utf8_cont
     assert documents == documents2
     content_hash = hashlib.sha256(documents[0]["content"].encode("utf-8")).hexdigest()
     assert content_hash == documents[0]["content_hash"]
-    assert "�" in documents[0]["content"]
+    assert "salutación" in documents[0]["content"]

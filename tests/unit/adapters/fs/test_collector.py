@@ -5,9 +5,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pathspec
+import pytest
 
-from repogpt.adapters.fs.collector import DefaultCollector, ignore_reason, should_ignore
+from repogpt.adapters.fs.collector import DefaultCollector, ignore_reason
 from repogpt.domain.analysis import AnalysisRequest
+from repogpt.domain.errors import CollectionFailure
 
 
 def test_collect_ignores_git_files(tmp_path: Path) -> None:
@@ -39,6 +41,29 @@ def test_collect_respects_repogptignore(tmp_path: Path) -> None:
         "skip.py",
     ]
     assert "generated/ignored.py" not in {item.relative_path for item in skipped}
+
+
+@pytest.mark.parametrize(
+    "rules,expected",
+    [
+        ("docs\n!docs/\n", ["docs/keep.py", "docs/skip.py"]),
+        ("!docs/\ndocs\n", []),
+        ("docs/\n!docs/keep.py\n", []),
+        ("docs\n!docs/\ndocs/skip.py\n", ["docs/keep.py"]),
+    ],
+)
+def test_collect_respects_directory_negation_order(
+    tmp_path: Path, rules: str, expected: list[str]
+) -> None:
+    (tmp_path / ".repogptignore").write_text(rules, encoding="utf-8")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    for name in ("keep.py", "skip.py"):
+        (docs / name).write_text("value = 1\n", encoding="utf-8")
+
+    files, _ = DefaultCollector().collect(AnalysisRequest(repo_root=tmp_path), {"py"})
+
+    assert [collected.relative_path for collected in files] == expected
 
 
 def test_collect_includes_tests_when_requested(tmp_path: Path) -> None:
@@ -111,7 +136,6 @@ def test_ignore_reason_reports_why_a_path_is_skipped(tmp_path: Path) -> None:
     ignored_file.write_text("test", encoding="utf-8")
 
     assert ignore_reason(ignored_file, tmp_path) == "default_ignore"
-    assert should_ignore(ignored_file, tmp_path) is True
 
 
 def test_collect_excludes_tests_uses_relative_path(tmp_path: Path) -> None:
@@ -129,7 +153,7 @@ def test_collect_excludes_tests_uses_relative_path(tmp_path: Path) -> None:
     assert {item.relative_path for item in skipped} == {"test_src.py", "tests/conftest.py"}
 
 
-def test_collect_skips_file_that_disappears_during_stat(tmp_path: Path) -> None:
+def test_collect_fails_if_file_disappears_during_stat(tmp_path: Path) -> None:
     (tmp_path / "stable.py").write_text("x=1", encoding="utf-8")
     vanishing = tmp_path / "vanishing.py"
     vanishing.write_text("x=2", encoding="utf-8")
@@ -144,15 +168,14 @@ def test_collect_skips_file_that_disappears_during_stat(tmp_path: Path) -> None:
                 raise OSError("file vanished")
         return original_stat(self, follow_symlinks=follow_symlinks)
 
-    with patch.object(Path, "stat", flaky_stat):
-        files, skipped = DefaultCollector().collect(AnalysisRequest(repo_root=tmp_path), {"py"})
+    with (
+        patch.object(Path, "stat", flaky_stat),
+        pytest.raises(CollectionFailure, match="vanishing.py"),
+    ):
+        DefaultCollector().collect(AnalysisRequest(repo_root=tmp_path), {"py"})
 
-    assert len(files) == 1
-    assert files[0].relative_path == "stable.py"
-    assert any(item.relative_path == "vanishing.py" for item in skipped)
 
-
-def test_collect_handles_invalid_repogptignore_pattern_without_failing(tmp_path: Path) -> None:
+def test_collect_rejects_invalid_repogptignore_pattern(tmp_path: Path) -> None:
     (tmp_path / ".repogptignore").write_text("[invalid\n", encoding="utf-8")
     (tmp_path / "keep.py").write_text("print('ok')", encoding="utf-8")
     (tmp_path / "skip.py").write_text("print('no')", encoding="utf-8")
@@ -163,11 +186,11 @@ def test_collect_handles_invalid_repogptignore_pattern_without_failing(tmp_path:
         _ = args, kwargs
         raise ValueError("invalid pattern")
 
-    with patch.object(pathspec.GitIgnoreSpec, "from_lines", raise_pattern_error):
-        files, skipped = collector.collect(AnalysisRequest(repo_root=tmp_path), {"py"})
-
-    assert {item.relative_path for item in files} == {"keep.py", "skip.py"}
-    assert {item.relative_path for item in skipped} == {".repogptignore"}
+    with (
+        patch.object(pathspec.GitIgnoreSpec, "from_lines", raise_pattern_error),
+        pytest.raises(CollectionFailure, match="repogptignore"),
+    ):
+        collector.collect(AnalysisRequest(repo_root=tmp_path), {"py"})
 
 
 def test_collect_treats_ambiguous_binary_without_null_as_text(tmp_path: Path) -> None:
