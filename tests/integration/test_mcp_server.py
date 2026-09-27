@@ -7,13 +7,21 @@ import sys
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
 import repogpt
-from repogpt.mcp_server import handle_request
+from repogpt.mcp_server import handle_request as dispatch_request
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src"
 CLI_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "cli_repo"
 JsonDict = dict[str, Any]
+
+
+def handle_request(request: JsonDict) -> JsonDict:
+    response = dispatch_request(request)
+    assert response is not None
+    return response
 
 
 def _run(
@@ -75,10 +83,10 @@ def _read_json(path: Path) -> JsonDict:
     return cast(JsonDict, json.loads(path.read_text(encoding="utf-8")))
 
 
-def _extract_content_text(response: JsonDict) -> JsonDict:
-    result = cast(JsonDict, response["result"])
-    content = cast(list[JsonDict], result["content"])
-    return cast(JsonDict, json.loads(cast(str, content[0]["text"])))
+def _extract_content_text(response: JsonDict) -> Any:
+    result = response["result"]
+    assert set(result) == {"content", "isError"}
+    return json.loads(result["content"][0]["text"])
 
 
 def _assert_payloads_equivalent(
@@ -129,8 +137,34 @@ def test_mcp_emit_code_units_matches_cli_output() -> None:
     )
 
     payload = _extract_content_text(response)
-    assert payload["exit_code"] == 2
-    assert payload["artifact"] == cli_payload
+    assert response["result"]["isError"] is True
+    assert payload == cli_payload
+
+
+@pytest.mark.parametrize("tool_name", ["repogpt_emit_ast", "repogpt_emit_code_units"])
+@pytest.mark.parametrize("fail_fast", [False, True])
+def test_mcp_parse_failures_mark_retained_artifact_as_error(
+    tmp_path: Path, tool_name: str, fail_fast: bool
+) -> None:
+    (tmp_path / "a_broken.py").write_text("def broken(:\n", encoding="utf-8")
+    (tmp_path / "b_good.py").write_text("x = 1\n", encoding="utf-8")
+    response = handle_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 30,
+            "method": "tools/call",
+            "params": {
+                "name": tool_name,
+                "arguments": {"repo_path": str(tmp_path), "fail_fast": fail_fast},
+            },
+        }
+    )
+
+    assert "error" not in response
+    assert response["result"]["isError"] is True
+    payload = _extract_content_text(response)
+    assert payload["stats"]["failed_files"] == 1
+    assert payload["stats"]["ok_files"] == (0 if fail_fast else 1)
 
 
 def test_mcp_language_filter_matches_cli_normalization() -> None:
@@ -154,8 +188,8 @@ def test_mcp_language_filter_matches_cli_normalization() -> None:
     )
 
     payload = _extract_content_text(response)
-    assert payload["exit_code"] == 2
-    assert payload["artifact"] == cli_payload
+    assert response["result"]["isError"] is True
+    assert payload == cli_payload
 
 
 def test_mcp_rejects_unsupported_language_like_cli() -> None:
@@ -174,7 +208,7 @@ def test_mcp_rejects_unsupported_language_like_cli() -> None:
         }
     )
 
-    assert response["error"]["code"] == -32000
+    assert response["error"]["code"] == -32602
     assert "unsupported languages: ts; supported: md, py" == response["error"]["message"]
 
 
@@ -195,9 +229,9 @@ def test_mcp_empty_language_filter_collects_nothing() -> None:
     )
 
     payload = _extract_content_text(response)
-    assert payload["exit_code"] == 0
-    assert payload["artifact"]["stats"]["total_files"] == 0
-    assert payload["artifact"]["records"] == []
+    assert response["result"]["isError"] is False
+    assert payload["stats"]["total_files"] == 0
+    assert payload["records"] == []
 
 
 def test_mcp_emit_ast_supports_ndjson() -> None:
@@ -218,9 +252,8 @@ def test_mcp_emit_ast_supports_ndjson() -> None:
         }
     )
 
-    payload = _extract_content_text(response)
-    assert payload["exit_code"] == 2
-    records = payload["artifact"]
+    records = _extract_content_text(response)
+    assert response["result"]["isError"] is True
     assert isinstance(records, list)
     assert records[-1]["record_type"] == "summary"
 
@@ -247,9 +280,8 @@ def test_mcp_compare_profiles_uses_code_units_artifact(tmp_path: Path) -> None:
         }
     )
 
-    payload = _extract_content_text(response)
-    comparison = payload["comparison"]
-    assert payload["exit_code"] == 0
+    comparison = _extract_content_text(response)
+    assert response["result"]["isError"] is False
     assert comparison["query_text"] == "helper"
     assert "flat_rag_v1" in comparison
     assert "structured_rag_v1" in comparison
@@ -287,9 +319,8 @@ def test_mcp_end_to_end_mixed_repo_matches_cli_across_flags(tmp_path: Path) -> N
             }
         )
 
-        mcp_payload_response = _extract_content_text(response)
-        assert mcp_payload_response["exit_code"] == 0
-        mcp_payload = cast(JsonDict, mcp_payload_response["artifact"])
+        mcp_payload = _extract_content_text(response)
+        assert response["result"]["isError"] is False
         _assert_payloads_equivalent(cli_payload, mcp_payload)
 
         cli_ast = _run(
@@ -318,9 +349,9 @@ def test_mcp_end_to_end_mixed_repo_matches_cli_across_flags(tmp_path: Path) -> N
                 },
             }
         )
-        mcp_ast_payload = _extract_content_text(response_ast)
-        assert mcp_ast_payload["exit_code"] == 0
-        mcp_ast = cast(list[JsonDict], mcp_ast_payload["artifact"])
+        mcp_ast = _extract_content_text(response_ast)
+        assert response_ast["result"]["isError"] is False
+        assert mcp_ast == cli_records
         assert mcp_ast[-1]["record_type"] == "summary"
         assert mcp_ast[-1]["schema_version"] == "1"
 
@@ -350,9 +381,8 @@ def test_mcp_end_to_end_mixed_repo_matches_cli_across_flags(tmp_path: Path) -> N
         }
     )
 
-    comparison_payload = _extract_content_text(compare)
-    assert comparison_payload["exit_code"] == 0
-    comparison = cast(JsonDict, comparison_payload["comparison"])
+    comparison = _extract_content_text(compare)
+    assert compare["result"]["isError"] is False
     assert comparison["query_text"] == "helper"
     assert "flat_rag_v1" in comparison
     assert "structured_rag_v1" in comparison

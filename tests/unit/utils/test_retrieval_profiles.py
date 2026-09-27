@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from repogpt.utils.retrieval_profiles import (
-    compare_profiles,
     assemble_flat_bundle,
     assemble_structured_bundle,
+    compare_profiles,
     rank_documents,
 )
 

@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import json
+from importlib.resources import files
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
-from jsonschema import Draft202012Validator
+import pytest
+from jsonschema import Draft202012Validator, ValidationError
+
+from repogpt.domain.analysis import AnalysisRequest, AstProjection
+from repogpt.runtime import build_analyze_repo
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GOLDEN_ROOT = REPO_ROOT / "tests" / "golden"
-SCHEMA_ROOT = REPO_ROOT / "schemas"
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -16,7 +20,8 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 
 def _validator(schema_name: str) -> Draft202012Validator:
-    schema = _load_json(SCHEMA_ROOT / schema_name)
+    resource = files("repogpt").joinpath("schemas").joinpath(schema_name)
+    schema = json.loads(resource.read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)
     return Draft202012Validator(schema)
 
@@ -43,3 +48,66 @@ def test_ast_ndjson_golden_records_match_public_schema() -> None:
 def test_code_units_json_golden_matches_public_schema() -> None:
     validator = _validator("code-units-v4.schema.json")
     validator.validate(_load_json(GOLDEN_ROOT / "cli_fixture_code_units.json"))
+
+
+@pytest.mark.parametrize(
+    "projection,format,flatten",
+    [
+        ("ast", "json", "file"),
+        ("ast", "json", "node"),
+        ("ast", "ndjson", "file"),
+        ("ast", "ndjson", "node"),
+        ("code_units", "json", "node"),
+    ],
+)
+def test_fresh_semantic_regressions_match_public_schemas(
+    tmp_path: Path,
+    projection: Literal["ast", "code_units"],
+    format: Literal["json", "ndjson"],
+    flatten: Literal["node", "file"],
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "sample.py").write_bytes(
+        b"\xef\xbb\xbf"
+        + (
+            "class C:\n    if flag:\n        def f(self): pass\n    else:\n"
+            '        def f(self): return "café"\nfrom ..pkg import item\n'
+        ).encode()
+    )
+    (root / "sample.md").write_text(
+        "# A\n# A\n[Docs](one) [Docs](two)\n````py\n```\n# hidden\n````\n# A-2\n",
+        encoding="utf-8",
+    )
+    result, artifact = build_analyze_repo().run(
+        AnalysisRequest(
+            repo_root=root,
+            projection=projection,
+            format=format,
+            flatten_kind=flatten,
+            repo_key="schema-test" if projection == "code_units" else None,
+            replace_scope=projection == "code_units",
+            include_tests=True,
+        )
+    )
+    assert result.stats.failed_files == 0
+    schema = "code-units-v4.schema.json" if projection == "code_units" else "ast-v1.schema.json"
+    validator = _validator(schema)
+    if format == "ndjson":
+        assert isinstance(artifact, AstProjection)
+        for record in artifact.ndjson_records:
+            validator.validate(record)
+    else:
+        validator.validate(artifact.json_payload)
+
+
+@pytest.mark.parametrize("depth", [1, 2])
+@pytest.mark.parametrize("child", [42, {"id": "incomplete"}])
+def test_ast_schema_rejects_malformed_nested_nodes(depth: int, child: object) -> None:
+    payload = _load_json(GOLDEN_ROOT / "cli_fixture_json.json")
+    node = payload["records"][0]
+    for _ in range(depth - 1):
+        node = node["children"][0]
+    node["children"] = [child]
+    with pytest.raises(ValidationError):
+        _validator("ast-v1.schema.json").validate(payload)

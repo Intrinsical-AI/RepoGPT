@@ -16,7 +16,11 @@ Current supported languages:
 Shared runtime composition:
 
 ```text
-Collector -> Loader -> Parser registry -> Projector -> Writer
+Collector -> Loader -> Parser registry -> Projector
+                                         |
+                                (result, projection)
+                                  /             \
+                            CLI writer       MCP result
 ```
 
 Concrete runtime wiring lives in `src/repogpt/runtime.py` and currently composes:
@@ -26,7 +30,8 @@ Concrete runtime wiring lives in `src/repogpt/runtime.py` and currently composes
 - `StaticParserRegistry`
 - `AstProjector`
 - `CodeUnitsProjector`
-- `ArtifactWriter`
+
+`AnalyzeRepo.run(request)` returns `(AnalysisResult, projection)` after request and replacement validation. Output destinations belong to the CLI, which calls `ArtifactWriter` explicitly. MCP consumes the returned projection directly. The application has no writer dependency or output target.
 
 ## 2. Architecture intent
 
@@ -73,7 +78,11 @@ Built-in tools:
 - `repogpt_emit_ast`
 - `repogpt_compare_profiles`
 
-The MCP server reuses the same analysis runtime and language-filter validation semantics as the CLI. It does not introduce a separate artifact contract. Successful tool payloads include a reserved `stderr` field that is currently empty; tool failures are reported through JSON-RPC errors.
+The MCP server reuses the same analysis runtime and language-filter validation semantics as the CLI. It does not introduce a separate artifact contract. Tool results contain `content` and `isError`. JSON text contains the artifact or comparison directly; AST NDJSON uses an array of records. No CLI exit code, empty stderr field, or extra artifact/comparison envelope is carried. Tool execution failures set `isError: true`, including partial/fail-fast artifacts whose file errors remain inspectable.
+
+Both entry points configure stdlib and structlog output on STDERR. Importing the MCP module does not configure logging. Valid notifications receive no responses and do not dispatch tools; invalid envelopes are rejected before notification handling, including envelopes without an ID. Wire validation checks required/unknown fields, booleans, language arrays, and enums without coercion. Handlers apply shared semantic policies such as the repository-key pattern before collection. Error codes distinguish malformed JSON (`-32700`), envelopes (`-32600`), unknown methods (`-32601`), arguments (`-32602`). Failed analysis and refused replacement use MCP tool results with `isError: true`.
+
+CLI rejects conflicting output targets and explicit AST-only flattening options on code-units exports before analysis. Shared request validation runs at the CLI boundary for argument diagnostics and inside the application for non-CLI callers; the policy is defined once.
 
 ## 4. Domain and projection model
 
@@ -108,6 +117,8 @@ Projection rules:
 
 AST export is the direct structural projection of parsed files.
 
+In both formats, `--flatten node` emits each node as a flat record. `--flatten file` emits one root record per file with its entire nested subtree. Its `children` recursively follow the node schema, without the top-level record wrapper fields. Both layouts remain AST v1.
+
 Formats:
 
 - JSON envelope
@@ -129,7 +140,7 @@ NDJSON record types:
 
 Schema file:
 
-- `schemas/ast-v1.schema.json`
+- `src/repogpt/schemas/ast-v1.schema.json`
 
 ### 5.2 Code-units (`schema_version: "4"`)
 
@@ -172,15 +183,19 @@ Contract notes:
 - `external_id` is the semantic public identifier for a projected document
 - `content_hash` is `sha256(content)` for the exact emitted span
 - `snapshot_id` is a repository-snapshot provenance marker derived from collected file hashes
-- `replace_scope: true` supports scope-replacement import flows
-- canonical retrieval fields are duplicated under `metadata` for generic downstream filters/importers
+- `repo_key` defaults to `local-` plus the full SHA-256 of the OS-normalized canonical absolute path; an explicit validated key makes identity portable across clones
+- `scope` is `repogpt:{repo_key}`; language and test filters do not create additional scopes
+- `replace_scope` defaults to `false`; explicit replacement requires all languages, tests included, non-empty documents, no failures/early stop, and no eligible candidates omitted by size/binary guards
+- retrieval fields have one representation at the document top level; `metadata` contains only file digest, tags, parser attributes, and dependencies
 - if a file yields no selected symbol or container units for its language, the projector falls back to the root module document
+
+A single semantic traversal assigns qualified names and external IDs. Python sibling redeclarations append `~2`, `~3`, etc.; descendants inherit the disambiguated segment. Markdown duplicate heading slugs avoid reserved natural sibling slugs. Containers and ancestry use the same name map. Internal node IDs are checked before projection; duplicate external IDs reject emission. See [CHANGELOG.md](../CHANGELOG.md) for current identity rules.
 
 Schema file:
 
-- `schemas/code-units-v4.schema.json`
+- `src/repogpt/schemas/code-units-v4.schema.json`
 
-The schema files are public contract validation helpers. They are validated against golden fixtures in tests and are not part of runtime artifact emission.
+The schema files are package resources included in wheels and source distributions, accessible through `importlib.resources.files("repogpt").joinpath("schemas")`. They are public contract validation helpers. They are validated against golden fixtures in tests and are not part of runtime artifact emission.
 
 ## 6. Retrieval profile semantics
 
@@ -207,7 +222,9 @@ The benchmark path compares profile behavior on:
 - expansion count
 - rough token estimate
 
-It does not claim end-to-end task quality, production relevance quality, or agentic performance.
+The benchmark and MCP comparison share a loader that checks the v4 envelope and required retrieval fields and rejects duplicate identities or malformed entries. `top_k` must be a non-negative integer; zero returns an empty bundle.
+
+Comparison ranks once and shares the same seeds across both profiles. It does not claim end-to-end task quality, production relevance quality, or agentic performance.
 
 ## 7. Collection, parsing, and failure semantics
 
@@ -235,6 +252,12 @@ For each collected file:
 4. record parse failures explicitly
 5. project the aggregate result to AST or `code-units`
 
+Python decoding uses `tokenize.detect_encoding` and strict decoding, retaining the raw byte digest even when decoding fails. Markdown retains UTF-8 replacement decoding. Source lines, spans, metrics, and comments share LF/CRLF/CR boundaries. Python traverses all statement branches while preserving declaration scopes and source order; imports retain their relative level. Markdown fences retain opening character and length, and same-line links include their start column in node identity.
+
+Python comment extraction removes one delimiter `#`, preserving further hashes while trimming leading spaces and trailing whitespace. Tags remain parser-specific: Markdown module tags reflect TODO/FIXME in HTML comments; Python exposes comments without generating those tags. Markdown link filtering tracks indented code, paragraph continuations, and list indentation using four-column tab stops. List-contained fences retain original file spans, use the enclosing list indentation for closing fences, and end as unclosed when the container ends. Block starts inside lists reset paragraph continuation, so a following indented code block contributes no links. These boundaries follow the [CommonMark list-item and indented-code rules](https://spec.commonmark.org/0.31.2/#list-items); the parser remains a structural subset of Markdown. Indented blocks do not add new IR nodes or affect the fenced-code-block count.
+
+Preamble fenced-code identities use `@module`, which cannot be produced by heading slugification. Fences under a literal `# Root` heading therefore retain their IDs and ordinals when a preamble fence is added or removed. The previous preamble `root` namespace is not retained as an alias; consumers should regenerate observations as described in the changelog. JSON decoder `ValueError` failures, including oversized integer literals, are parse errors and leave the MCP session available for the next request.
+
 ### 7.3 Failure and exit semantics
 
 Invariants:
@@ -243,13 +266,22 @@ Invariants:
 - partial success is allowed
 - fail-fast stops after the first parse error
 - invalid repository paths are reported cleanly
+- any traversal, stat, probe, or source-read error aborts before projection or output
+- a missing ignore file is allowed; an unreadable or invalid existing ignore file aborts collection
+- an explicit replacement request rejects incomplete results before writing
+- file output uses a temporary file in the destination directory followed by atomic replacement; write errors preserve the previous destination
+- writers propagate destination-specific I/O errors; entrypoints own the error diagnostic
 
 Public exit-code policy:
 
-- `0`: success
+- `0`: success, or early close by the STDOUT consumer
 - `1`: fail-fast stopped on first parse error
-- `2`: partial run with emitted artifact
-- `3`: invalid path or unrecoverable runtime error
+- `2`: partial parse/decode run with emitted artifact, or argument rejection without an artifact
+- `3`: invalid path, I/O error, refused replacement, or unrecoverable runtime error
+
+Replacement refusal takes precedence over normal partial/fail-fast emission. Known ignores and symlink exclusions define the collection universe; defaults do not imply a complete repository export. Downstream consumers own import and deletion operations.
+
+The writer flushes STDOUT before returning, so buffered pipe errors reach the CLI handler. CLI and MCP share only the process-level cleanup that redirects the closed output descriptor to the null device to prevent a second flush failure at shutdown. Early-close status `0` acknowledges consumer termination, not complete artifact delivery. Other output failures use `3`; MCP also uses `3` for other stdio I/O errors.
 
 ## 8. Layers and dependency rules
 
@@ -260,20 +292,24 @@ RepoGPT follows a hexagonal-leaning layered structure.
 | Domain | core entities and value objects | filesystem and CLI logic |
 | Application | use-case orchestration | parser-specific behavior |
 | Ports | adapter contracts | concrete adapter logic |
+| Utils | shared tree, text, identity, and retrieval helpers | application orchestration or concrete adapter dependencies |
 | Adapters | filesystem, parsers, projectors, writers | cross-layer policy sprawl |
-| Interfaces | CLI and MCP entry points | domain implementation details |
+| Interfaces | CLI/MCP entrypoints, runtime composition, logging and stdio setup | domain implementation details |
 
 Dependency rule:
 
 ```text
 Domain       -> (nothing)
-Application  -> Domain
 Ports        -> Domain
-Adapters     -> Domain + Ports
-Interfaces   -> Application + Adapters + Domain
+Utils        -> Domain
+Application  -> Domain + Ports + Utils
+Adapters     -> Domain + Ports + Utils
+Interfaces   -> Application + Adapters + Domain + Ports + Utils
 ```
 
 The structural representation must not depend on any concrete parser implementation or retrieval engine.
+
+These rules describe dependencies between RepoGPT layers; imports within a layer and standard-library imports are separate. `tests/unit/test_architecture.py` derives the internal dependency edges from source imports, including relative imports, and checks the allowed directions. Its narrower checks also keep I/O/logging implementation out of analysis orchestration and concrete parsers out of the collector and CLI.
 
 ## 9. Observability and operational boundaries
 

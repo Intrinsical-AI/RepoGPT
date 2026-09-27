@@ -14,7 +14,6 @@ def _loaded(path: str = "test.py", content: str = "x=1\n") -> LoadedFile:
     raw = content.encode("utf-8")
     return LoadedFile(
         collected_file=CollectedFile(abs_path=Path(path), relative_path=path, language="py"),
-        raw_bytes=raw,
         text=content,
         digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
     )
@@ -36,7 +35,7 @@ def test_ast_projector_json_envelope() -> None:
     result = AnalysisResult(
         parsed_files=[parsed_file],
         skipped_files=[],
-        stats=AnalysisStats(total_files=1, ok_files=1, failed_files=0, skipped_files=0),
+        stats=AnalysisStats(total_files=1, ok_files=1, failed_files=0),
     )
 
     projection = AstProjector().project(result, AnalysisRequest(repo_root=Path.cwd()))
@@ -61,7 +60,7 @@ def test_ast_projector_ndjson_contains_failure_and_summary() -> None:
                 reason="ignored",
             )
         ],
-        stats=AnalysisStats(total_files=1, ok_files=0, failed_files=1, skipped_files=1),
+        stats=AnalysisStats(total_files=1, ok_files=0, failed_files=1),
     )
 
     projection = AstProjector().project(result, AnalysisRequest(repo_root=Path.cwd()))

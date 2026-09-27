@@ -6,10 +6,8 @@ from typing import Any
 
 from repogpt.adapters.writers.artifact_writer import ArtifactWriter
 from repogpt.domain.analysis import (
-    AnalysisRequest,
     AstProjection,
     CodeUnitsProjection,
-    OutputTarget,
 )
 
 
@@ -21,43 +19,33 @@ def test_writer_writes_ast_json_to_file(tmp_path: Path) -> None:
         ndjson_records=[],
     )
 
-    ArtifactWriter().write(
-        projection,
-        AnalysisRequest(repo_root=tmp_path, output_target=OutputTarget(path=output)),
-    )
+    ArtifactWriter().write(projection, output)
 
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["schema_version"] == "1"
 
 
-def test_writer_writes_ndjson_to_stdout(tmp_path: Path, capsys: Any) -> None:
+def test_writer_writes_ndjson_to_stdout(capsys: Any) -> None:
     projection = AstProjection(
         schema_version="1",
         json_payload={"schema_version": "1"},
         ndjson_records=[{"record_type": "summary", "schema_version": "1", "stats": {}}],
     )
 
-    ArtifactWriter().write(
-        projection,
-        AnalysisRequest(
-            repo_root=tmp_path,
-            format="ndjson",
-            output_target=OutputTarget(to_stdout=True),
-        ),
-    )
+    ArtifactWriter().write(projection, None, format="ndjson")
 
     records = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert records[0]["record_type"] == "summary"
 
 
-def test_writer_defaults_code_units_filename(tmp_path: Path, monkeypatch: Any) -> None:
-    monkeypatch.chdir(tmp_path)
+def test_writer_writes_code_units_to_explicit_path(tmp_path: Path) -> None:
+    output = tmp_path / "units.json"
     projection = CodeUnitsProjection(
         schema_version="4",
         json_payload={"schema_version": "4", "documents": [], "failures": [], "stats": {}},
     )
 
-    ArtifactWriter().write(projection, AnalysisRequest(repo_root=tmp_path, projection="code_units"))
+    ArtifactWriter().write(projection, output)
 
-    payload = json.loads((tmp_path / "code_units.json").read_text(encoding="utf-8"))
+    payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["schema_version"] == "4"

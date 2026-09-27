@@ -1,11 +1,12 @@
 [project]
 name               = "repogpt"
-version            = "0.8.3"
+version            = "0.9.0"
 description        = "A consultable abstraction layer over any codebase: structured summaries and code intelligence for humans and LLM/RAG systems."
 readme             = "README.md"
 requires-python    = ">=3.10"
 keywords           = ["code-analysis", "LLM-integration", "RAG", "code-intelligence", "repo-gpt"]
-license            = { file = "LICENSE" }
+license            = "MIT"
+license-files      = ["LICENSE"]
 
 authors = [
   { name = "Intrinsical-AI", email = "p.p.cabezon@proton.me" },
@@ -19,7 +20,6 @@ classifiers = [
   "Intended Audience :: Developers",
   "Topic :: Software Development :: Code Generators",
   "Topic :: Software Development :: Build Tools",
-  "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
@@ -54,22 +54,27 @@ repogpt = "repogpt.app.cli:main"
 repogpt-mcp = "repogpt.mcp_server:main"
 
 [build-system]
-requires    = ["setuptools>=61.0", "wheel"]
+requires    = ["setuptools>=77.0.3", "wheel"]
 build-backend = "setuptools.build_meta"
 
 
 [tool.setuptools]
-license-files = ["LICENSE"]
 package-dir   = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+repogpt = ["schemas/*.json"]
+
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
-exclude = ["src/repogpt/__init__.py", "tests/data", "tests/fixtures"]
+exclude = ["tests/data", "tests/fixtures"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.mypy]
 strict = true
@@ -80,4 +85,3 @@ exclude = ["tests/data/", "tests/fixtures/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "C4", "DTZ"]
-ignore = ["I001"]

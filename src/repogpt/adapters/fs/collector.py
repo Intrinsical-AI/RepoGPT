@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 
 import pathspec
-import structlog
 
 from repogpt.domain.analysis import AnalysisRequest
+from repogpt.domain.errors import CollectionFailure
 from repogpt.domain.files import CollectedFile, SkippedFile
 from repogpt.ports.collector import CollectorPort
 from repogpt.utils.file_utils import is_likely_binary
@@ -30,21 +31,20 @@ DEFAULT_IGNORES: set[str] = {
     ".vscode",
 }
 
-logger = structlog.get_logger(__name__)
-
 
 def load_pathspec(repo_root: Path) -> pathspec.PathSpec | None:
     ignore_file = repo_root / ".repogptignore"
     try:
-        if ignore_file.exists():
-            with ignore_file.open("r", encoding="utf-8") as handle:
-                lines = [
-                    line for line in handle if line.strip() and not line.strip().startswith("#")
-                ]
-            return pathspec.GitIgnoreSpec.from_lines(lines)
-    except (OSError, ValueError, UnicodeError):
-        logger.warning("failed to read repogptignore", path=str(ignore_file))
-    return None
+        ignore_file.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise CollectionFailure(f"Cannot inspect {ignore_file}: {exc}") from exc
+    try:
+        with ignore_file.open("r", encoding="utf-8") as handle:
+            return pathspec.GitIgnoreSpec.from_lines(handle)
+    except (OSError, ValueError, UnicodeError) as exc:
+        raise CollectionFailure(f"Cannot read .repogptignore: {exc}") from exc
 
 
 def ignore_reason(p: Path, repo_root: Path, spec: pathspec.PathSpec | None = None) -> str | None:
@@ -52,17 +52,14 @@ def ignore_reason(p: Path, repo_root: Path, spec: pathspec.PathSpec | None = Non
     if any(part in DEFAULT_IGNORES for part in rel.parts):
         return "default_ignore"
     try:
-        if p.is_symlink():
-            return "symlink"
-    except OSError:
-        return "symlink_error"
-    if spec and _matches_pathspec(spec, rel, is_dir=p.is_dir()):
+        mode = p.lstat().st_mode
+    except OSError as exc:
+        raise CollectionFailure(f"Cannot inspect {rel}: {exc}") from exc
+    if stat.S_ISLNK(mode):
+        return "symlink"
+    if spec and _matches_pathspec(spec, rel, is_dir=stat.S_ISDIR(mode)):
         return "repogptignore"
     return None
-
-
-def should_ignore(p: Path, repo_root: Path, spec: pathspec.PathSpec | None = None) -> bool:
-    return ignore_reason(p, repo_root, spec) is not None
 
 
 class DefaultCollector(CollectorPort):
@@ -80,19 +77,13 @@ class DefaultCollector(CollectorPort):
             relative_path = path.relative_to(repo_root).as_posix()
             reason = ignore_reason(path, repo_root, spec)
             if reason is not None:
-                self._record_skip_if_file(skipped, path, relative_path, reason)
+                skipped.append(SkippedFile(path, relative_path, reason))
                 continue
             try:
-                if not path.is_file():
-                    continue
-            except OSError:
-                skipped.append(
-                    SkippedFile(
-                        abs_path=path,
-                        relative_path=relative_path,
-                        reason="is_file_error",
-                    )
-                )
+                info = path.stat()
+            except OSError as exc:
+                raise CollectionFailure(f"Cannot stat {relative_path}: {exc}") from exc
+            if not stat.S_ISREG(info.st_mode):
                 continue
             extension = path.suffix.lstrip(".").lower()
             if extension not in supported_extensions:
@@ -113,17 +104,7 @@ class DefaultCollector(CollectorPort):
                     )
                 )
                 continue
-            try:
-                file_size = path.stat().st_size
-            except OSError:
-                skipped.append(
-                    SkippedFile(
-                        abs_path=path,
-                        relative_path=relative_path,
-                        reason="stat_failed",
-                    )
-                )
-                continue
+            file_size = info.st_size
             if file_size > request.max_file_size:
                 skipped.append(
                     SkippedFile(
@@ -133,7 +114,11 @@ class DefaultCollector(CollectorPort):
                     )
                 )
                 continue
-            if is_likely_binary(path):
+            try:
+                binary = is_likely_binary(path)
+            except OSError as exc:
+                raise CollectionFailure(f"Cannot read {relative_path}: {exc}") from exc
+            if binary:
                 skipped.append(
                     SkippedFile(
                         abs_path=path,
@@ -160,7 +145,9 @@ class DefaultCollector(CollectorPort):
         candidates: list[Path] = []
 
         def onerror(error: OSError) -> None:
-            logger.warning("failed to walk path", error=str(error))
+            raise CollectionFailure(
+                f"Cannot traverse {error.filename or repo_root}: {error}"
+            ) from error
 
         for dirpath, dirnames, filenames in os.walk(repo_root, topdown=True, onerror=onerror):
             current_dir = Path(dirpath)
@@ -183,34 +170,7 @@ class DefaultCollector(CollectorPort):
         rel_parts = path.relative_to(repo_root).parts
         return "tests" in rel_parts or path.name.startswith(("test_", "test-"))
 
-    def _record_skip_if_file(
-        self,
-        skipped: list[SkippedFile],
-        path: Path,
-        relative_path: str,
-        reason: str,
-    ) -> None:
-        try:
-            if path.is_file():
-                skipped.append(
-                    SkippedFile(
-                        abs_path=path,
-                        relative_path=relative_path,
-                        reason=reason,
-                    )
-                )
-        except OSError:
-            skipped.append(
-                SkippedFile(
-                    abs_path=path,
-                    relative_path=relative_path,
-                    reason=f"{reason}_is_file_error",
-                )
-            )
-
 
 def _matches_pathspec(spec: pathspec.PathSpec, rel: Path, *, is_dir: bool) -> bool:
-    relative_path = rel.as_posix()
-    if spec.match_file(relative_path):
-        return True
-    return is_dir and spec.match_file(f"{relative_path}/")
+    relative_path = rel.as_posix() + ("/" if is_dir else "")
+    return spec.match_file(relative_path)

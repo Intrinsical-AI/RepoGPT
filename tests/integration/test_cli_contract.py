@@ -4,9 +4,11 @@ import json
 import os
 import subprocess
 import sys
-from tempfile import TemporaryDirectory
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import cast
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src"
@@ -76,6 +78,35 @@ def test_cli_rejects_unsupported_language() -> None:
     assert "unsupported languages" in proc.stderr
 
 
+@pytest.mark.parametrize("repo_path", ["", " \t "])
+def test_cli_rejects_blank_repo_path_before_replacement(tmp_path: Path, repo_path: str) -> None:
+    (tmp_path / "cwd_only.py").write_text("value = 1\n", encoding="utf-8")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "repogpt.app.cli",
+            repo_path,
+            "--emit",
+            "code-units",
+            "--include-tests",
+            "--replace-scope",
+            "--repo-key",
+            "expected-repo",
+            "--stdout",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(SRC_ROOT)},
+        timeout=15,
+    )
+    assert proc.returncode == 2
+    assert proc.stdout == ""
+    assert "repo_path must not be blank" in proc.stderr
+    assert "starting run" not in proc.stderr
+
+
 def test_cli_fail_fast_returns_exit_code_1() -> None:
     proc = _run(["--fail-fast", "--stdout", "--include-tests"])
     assert proc.returncode == 1
@@ -136,7 +167,16 @@ def test_cli_json_matches_golden_fixture() -> None:
 
 def test_cli_code_units_matches_golden_fixture() -> None:
     proc = _run(
-        ["--stdout", "--format", "json", "--emit", "code-units", "--include-tests"],
+        [
+            "--stdout",
+            "--format",
+            "json",
+            "--emit",
+            "code-units",
+            "--include-tests",
+            "--repo-key",
+            "cli_repo",
+        ],
         CLI_FIXTURE,
     )
     assert proc.returncode == 2
@@ -156,7 +196,7 @@ def test_cli_code_units_documents_are_consumable_without_metadata() -> None:
     document = payload["documents"][0]
 
     assert payload["schema_version"] == "4"
-    assert payload["replace_scope"] is True
+    assert payload["replace_scope"] is False
     assert {
         "external_id",
         "source_id",
@@ -180,21 +220,8 @@ def test_cli_code_units_documents_are_consumable_without_metadata() -> None:
         "has_children",
         "metadata",
     }.issubset(document.keys())
-    assert document["metadata"]["repo_key"] == document["repo_key"]
-    assert document["metadata"]["path"] == document["path"]
-    assert document["metadata"]["language"] == document["language"]
-    assert document["metadata"]["unit_type"] == document["unit_type"]
-    assert document["metadata"]["unit_level"] == document["unit_level"]
-    assert document["metadata"]["symbol"] == document["symbol"]
-    assert document["metadata"]["qualified_name"] == document["qualified_name"]
-    assert document["metadata"]["container_id"] == document["container_id"]
-    assert document["metadata"]["depth"] == document["depth"]
-    assert document["metadata"]["ancestor_path"] == document["ancestor_path"]
-    assert document["metadata"]["start_line"] == document["start_line"]
-    assert document["metadata"]["end_line"] == document["end_line"]
-    assert document["metadata"]["content_hash"] == document["content_hash"]
-    assert document["metadata"]["docstring_present"] == document["docstring_present"]
-    assert document["metadata"]["has_children"] == document["has_children"]
+    assert set(document["metadata"]) == {"file", "tags", "attributes", "dependencies"}
+    assert document["metadata"].keys().isdisjoint(document)
 
 
 def test_cli_ndjson_matches_golden_fixture() -> None:
@@ -243,3 +270,49 @@ def test_cli_file_repo_path_returns_clean_exit_code_3() -> None:
     assert proc.returncode == 3
     assert "invalid repository path" in proc.stderr
     assert "Traceback" not in proc.stderr
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        ["--stdout", "-o", "unused.json"],
+        ["--stdout", "-o", "/dev/stdout"],
+        ["--emit", "code-units", "--flatten", "node"],
+        ["--emit", "code-units", "--flatten", "file"],
+        ["--emit", "code-units", "--format", "ndjson"],
+    ],
+)
+def test_cli_rejects_conflicting_options_before_analysis(options: list[str]) -> None:
+    proc = _run(options, REPO_ROOT / "does-not-exist")
+    assert proc.returncode == 2
+    assert proc.stdout == ""
+    assert "starting run" not in proc.stderr
+    assert "invalid repository path" not in proc.stderr
+
+
+def test_cli_dev_stdout_alias_emits_artifact(tmp_path: Path) -> None:
+    proc = _run(["-o", "/dev/stdout"], tmp_path)
+    assert proc.returncode == 0
+    assert json.loads(proc.stdout)["records"] == []
+
+
+@pytest.mark.parametrize(
+    "emit,filename", [("ast", "analysis.json"), ("code-units", "code_units.json")]
+)
+def test_cli_owns_default_output_destination(tmp_path: Path, emit: str, filename: str) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-m", "repogpt.app.cli", str(repo), "--emit", emit],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(SRC_ROOT)},
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == ""
+    payload = json.loads((tmp_path / filename).read_text(encoding="utf-8"))
+    assert payload["stats"]["ok_files"] == 1
+    assert sorted(path.name for path in repo.iterdir()) == ["sample.py"]

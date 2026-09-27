@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import logging
 import sys
 from pathlib import Path
 
@@ -10,41 +9,56 @@ import structlog
 from repogpt.adapters.parsers.registry import StaticParserRegistry
 from repogpt.adapters.writers.artifact_writer import ArtifactWriter
 from repogpt.application.exit_codes import exit_code_for_result
+from repogpt.application.export_policy import validate_request
 from repogpt.application.languages import UnsupportedLanguagesError, parse_cli_languages
-from repogpt.domain.analysis import AnalysisRequest, OutputTarget
-from repogpt.domain.errors import InvalidRepoError
+from repogpt.domain.analysis import AnalysisRequest
+from repogpt.domain.errors import (
+    CollectionFailure,
+    InvalidRepoError,
+    InvalidRequestError,
+    UnsafeReplacementError,
+)
+from repogpt.logging_config import configure_logging
 from repogpt.runtime import build_analyze_repo
-
-LEVELS: dict[str, int] = {"DEBUG": logging.DEBUG, "INFO": logging.INFO}
-
-
-def _configure_logging(level: str) -> None:
-    logging.basicConfig(level=LEVELS[level], format="%(message)s", stream=sys.stderr)
-    structlog.configure(
-        wrapper_class=structlog.make_filtering_bound_logger(LEVELS[level]),
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
-    )
+from repogpt.stdio import silence_failed_stdout
 
 
-def main() -> int:  # noqa: D401
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Analyze a code repository and output structured summaries.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("repo_path")
     parser.add_argument("--include-tests", action="store_true")
-    parser.add_argument("--flatten", choices=["node", "file"], default="node")
+    parser.add_argument(
+        "--flatten",
+        choices=["node", "file"],
+        default=argparse.SUPPRESS,
+        help="AST layout (default: node)",
+    )
     parser.add_argument("--format", choices=["json", "ndjson"], default="json")
-    parser.add_argument("--stdout", action="store_true")
-    parser.add_argument("-o", "--output")
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--stdout", action="store_true")
+    output.add_argument("-o", "--output")
     parser.add_argument("--languages")
     parser.add_argument("--emit", choices=["ast", "code-units"], default="ast")
     parser.add_argument("--log-level", choices=["INFO", "DEBUG"], default="INFO")
     parser.add_argument("--fail-fast", action="store_true")
+    parser.add_argument("--repo-key", help="Explicit code-units identity shared across clones")
+    parser.add_argument(
+        "--replace-scope",
+        action="store_true",
+        help="Request replacement from a complete code-units export",
+    )
 
     args = parser.parse_args()
+    if not args.repo_path.strip():
+        parser.error("repo_path must not be blank")
+    flatten = getattr(args, "flatten", None)
+    if args.emit == "code-units" and flatten is not None:
+        parser.error("--flatten only applies to --emit ast")
 
-    _configure_logging(args.log_level)
+    configure_logging(args.log_level)
     log = structlog.get_logger()
     registry = StaticParserRegistry()
 
@@ -55,29 +69,32 @@ def main() -> int:  # noqa: D401
         )
     except UnsupportedLanguagesError as exc:
         parser.error(exc.message)
-    if args.emit == "code-units" and args.format != "json":
-        parser.error("--emit code-units only supports --format json")
-    to_stdout = args.stdout or (args.output and Path(args.output).as_posix() == "/dev/stdout")
+    to_stdout = bool(args.stdout or (args.output and Path(args.output).as_posix() == "/dev/stdout"))
+    default_output = "code_units.json" if args.emit == "code-units" else "analysis.json"
+    output_path = None if to_stdout else Path(args.output or default_output)
 
     request = AnalysisRequest(
-        repo_root=Path(args.repo_path).resolve(),
+        repo_root=Path(args.repo_path),
         include_tests=args.include_tests,
         supported_languages=langs,
         projection="code_units" if args.emit == "code-units" else "ast",
         format=args.format,
-        flatten_kind=args.flatten,
-        output_target=OutputTarget(
-            to_stdout=to_stdout,
-            path=None if to_stdout else Path(args.output) if args.output else None,
-        ),
-        log_level=args.log_level,
+        flatten_kind=flatten or "node",
         fail_fast=args.fail_fast,
+        repo_key=args.repo_key,
+        replace_scope=args.replace_scope,
     )
+
+    try:
+        validate_request(request, registry.supported_extensions())
+    except InvalidRequestError as exc:
+        parser.error(str(exc))
 
     log.info("starting run", repo=str(request.repo_root), format=request.format)
 
     try:
-        result = build_analyze_repo(ArtifactWriter()).run(request)
+        result, projection = build_analyze_repo().run(request)
+        ArtifactWriter().write(projection, output_path, format=request.format)
         if result.stopped_early and result.stats.failed_files > 0:
             first_failure = next(
                 parsed_file.failure.message
@@ -93,6 +110,16 @@ def main() -> int:  # noqa: D401
         return exit_code_for_result(result)
     except InvalidRepoError as exc:
         log.error("invalid repository path", error=str(exc))
+        return 3
+    except (CollectionFailure, UnsafeReplacementError) as exc:
+        log.error("analysis aborted", error=str(exc))
+        return 3
+    except OSError as exc:
+        if output_path is None:
+            silence_failed_stdout()
+            if isinstance(exc, BrokenPipeError):
+                return 0
+        log.error("output I/O error", error=str(exc))
         return 3
     except Exception as exc:
         log.error("unexpected error", error=str(exc))

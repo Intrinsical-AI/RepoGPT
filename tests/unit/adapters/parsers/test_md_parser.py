@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
+import pytest
+
 from repogpt.adapters.parsers.md_parser import MarkdownParser
 from repogpt.domain.files import CollectedFile, FileDigest, LoadedFile
 from repogpt.domain.nodes import CodeNode
@@ -16,7 +18,6 @@ def _loaded_file(filename: str) -> LoadedFile:
     raw = path.read_bytes()
     return LoadedFile(
         collected_file=CollectedFile(abs_path=path, relative_path=filename, language="md"),
-        raw_bytes=raw,
         text=raw.decode("utf-8", errors="replace"),
         digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
     )
@@ -83,7 +84,6 @@ def test_markdown_unclosed_code_block_extends_to_eof(tmp_path: Path) -> None:
                 relative_path="unclosed.md",
                 language="md",
             ),
-            raw_bytes=raw,
             text=content,
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
         )
@@ -113,7 +113,6 @@ def test_markdown_skips_headings_and_links_inside_code_fences(tmp_path: Path) ->
                 relative_path="fenced.md",
                 language="md",
             ),
-            raw_bytes=raw,
             text=content,
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
         )
@@ -135,7 +134,6 @@ def test_markdown_tilde_fence_is_recognized_as_code_block(tmp_path: Path) -> Non
     root = MarkdownParser().parse(
         LoadedFile(
             collected_file=CollectedFile(abs_path=fixture, relative_path="tilde.md", language="md"),
-            raw_bytes=raw,
             text=content,
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
         )
@@ -158,7 +156,6 @@ def test_markdown_tilde_fence_not_closed_by_backtick_fence(tmp_path: Path) -> No
     root = MarkdownParser().parse(
         LoadedFile(
             collected_file=CollectedFile(abs_path=fixture, relative_path="mixed.md", language="md"),
-            raw_bytes=raw,
             text=content,
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
         )
@@ -180,7 +177,6 @@ def test_markdown_fence_info_string_with_space_uses_first_token(tmp_path: Path) 
     root = MarkdownParser().parse(
         LoadedFile(
             collected_file=CollectedFile(abs_path=fixture, relative_path="info.md", language="md"),
-            raw_bytes=raw,
             text=content,
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
         )
@@ -190,3 +186,85 @@ def test_markdown_fence_info_string_with_space_uses_first_token(tmp_path: Path) 
     code_blocks = [node for node in nodes if node["type"] == "code_block"]
     assert len(code_blocks) == 1
     assert code_blocks[0]["attributes"]["fence_language"] == "python"
+
+
+@pytest.mark.parametrize(
+    "content,expected",
+    [
+        ("    # literal\n    [hidden](code)\n[visible](prose)\n", ["visible"]),
+        ("\t[hidden](code)\n\n\t[also hidden](code)\n[visible](prose)", ["visible"]),
+        ("# Heading\n    [hidden](code)\n\n[visible](prose)", ["visible"]),
+        ("```\ncode\n```\n    [hidden](code)\n", []),
+        ("Paragraph\n    [visible](prose)\n\n    [hidden](code)", ["visible"]),
+        ("Paragraph\n\t[visible](prose)", ["visible"]),
+        ("```not`a-fence\n    [visible](prose)", ["visible"]),
+        ("Paragraph\n2. still prose\n\n    [hidden](code)", []),
+        ("-\n\n     [visible](prose)\n\n      [hidden](code)", ["visible"]),
+        ("* * *\n    [hidden](code)\n[visible](prose)", ["visible"]),
+        ("- Item\n\n    [visible](prose)\n\n      [hidden](code)", ["visible"]),
+        ("10. Item\n\n    [visible](prose)\n\n        [hidden](code)", ["visible"]),
+        ("- Item\n  - Nested\n\n      [visible](prose)\n\n        [hidden](code)", ["visible"]),
+        ("- Item\n\n\t[visible](prose)\n\n\t\t[hidden](code)", ["visible"]),
+        ("- Item\nlazy continuation\n\n    [visible](prose)", ["visible"]),
+        ("- Item\n\nOutside\n\n    [hidden](code)\n[visible](prose)", ["visible"]),
+        ("-     [hidden](code)\n\n  [visible](prose)", ["visible"]),
+        ("    ```\n    [hidden](code)\n    ```\n[visible](prose)", ["visible"]),
+        ("- # Heading\n      [hidden](code)\n\n  [visible](prose)", ["visible"]),
+        ("- Item\n\n  # Heading\n      [hidden](code)", []),
+        ("- - # Heading\n        [hidden](code)", []),
+        ("- ```\n  [hidden](code)\n  ```\n[visible](prose)", ["visible"]),
+        ("- Item\n  - ~~~\n    [hidden](code)\n    ~~~\n[visible](prose)", ["visible"]),
+        ("- ```\n  [hidden](code)\n\n[visible](prose)", ["visible"]),
+        ("- ```\n  [hidden](code)\n- [visible](prose)", ["visible"]),
+        ("Paragraph\n    # literal\n    [visible](prose)", ["visible"]),
+        ("- #\n      [hidden](code)", []),
+        ("- * * *\n      [hidden](code)\n\n  [visible](prose)", ["visible"]),
+    ],
+)
+def test_markdown_links_respect_indented_code_and_prose(
+    tmp_path: Path, content: str, expected: list[str]
+) -> None:
+    raw = content.encode()
+    root = MarkdownParser().parse(
+        LoadedFile(
+            collected_file=CollectedFile(tmp_path / "sample.md", "sample.md", "md"),
+            text=content,
+            digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
+        )
+    )
+    links = [node for node in flatten_tree(root) if node["type"] == "link"]
+    assert [node["name"] for node in links] == expected
+    assert root.metrics["link_count"] == len(expected)
+    for node in links:
+        line = content.splitlines()[node["start_line"] - 1]
+        assert line[node["attributes"]["start_column"]] == "["
+
+
+@pytest.mark.parametrize(
+    "content,span,unclosed",
+    [
+        ("- ```py\n  [hidden](code)\n  ```\n# After\n", (1, 3), False),
+        ("- Item\n  - ~~~py\n    [hidden](code)\n    ~~~\n# After\n", (2, 4), False),
+        ("- ```py\n  [hidden](code)\n# After\n", (1, 2), True),
+    ],
+)
+def test_list_fences_preserve_spans_and_stop_at_container_boundary(
+    tmp_path: Path,
+    content: str,
+    span: tuple[int, int],
+    unclosed: bool,
+) -> None:
+    root = MarkdownParser().parse(
+        LoadedFile(
+            CollectedFile(tmp_path / "sample.md", "sample.md", "md"),
+            content,
+            FileDigest(len(content), hashlib.sha256(content.encode()).hexdigest()),
+        )
+    )
+    nodes = flatten_tree(root)
+    blocks = [node for node in nodes if node["type"] == "code_block"]
+    assert len(blocks) == root.metrics["code_block_count"] == 1
+    assert (blocks[0]["start_line"], blocks[0]["end_line"]) == span
+    assert blocks[0]["attributes"]["fence_language"] == "py"
+    assert bool(blocks[0]["attributes"].get("is_unclosed")) is unclosed
+    assert [node["name"] for node in nodes if node["type"] == "heading"] == ["After"]

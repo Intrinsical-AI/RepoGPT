@@ -59,7 +59,7 @@
           "parent_id": "4b46ddd910d6ac54",
           "children": [
             {
-              "id": "1adad4e12afd9eb6",
+              "id": "7420e185b51052ec",
               "type": "link",
               "name": "Docs",
               "language": "md",
@@ -79,7 +79,8 @@
               "children": [],
               "attributes": {
                 "text": "Docs",
-                "url": "https://example.com"
+                "url": "https://example.com",
+                "start_column": 0
               },
               "metrics": {}
             },
@@ -141,7 +142,7 @@
       "parent_id": null,
       "children": [
         {
-          "id": "39c51f5c44762db3",
+          "id": "0e8cc04fd4e7478a",
           "type": "import",
           "name": null,
           "language": "py",
@@ -163,6 +164,7 @@
             "module": null,
             "import_kind": "import",
             "is_relative": false,
+            "import_level": 0,
             "imported_names": [
               {
                 "name": "os",
@@ -257,7 +259,7 @@
             ],
             "returns": "str",
             "visibility": "public",
-            "signature": "helper(name: str = 'world') -> str"
+            "signature": "helper(name: str='world') -> str"
           },
           "metrics": {}
         }
