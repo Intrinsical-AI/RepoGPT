@@ -1,14 +1,21 @@
 repos:
-  - repo: https://github.com/charliermarsh/ruff-pre-commit
-    rev: v0.4.4
+  - repo: local
     hooks:
       - id: ruff-format
-        exclude: 'tests/(data|fixtures)/'
+        name: ruff format (uv.lock)
+        entry: uv run --locked --extra dev ruff format --check .
+        language: system
+        pass_filenames: false
+        always_run: true
       - id: ruff
-        exclude: 'tests/(data|fixtures)/'
-
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.8.0
-    hooks:
+        name: ruff check (uv.lock)
+        entry: uv run --locked --extra dev ruff check .
+        language: system
+        pass_filenames: false
+        always_run: true
       - id: mypy
-        exclude: 'tests/(data|fixtures)/'
+        name: mypy (uv.lock)
+        entry: uv run --locked --extra dev mypy src tests
+        language: system
+        pass_filenames: false
+        always_run: true

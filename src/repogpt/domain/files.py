@@ -30,9 +30,9 @@ class SkippedFile:
 @dataclass(frozen=True)
 class LoadedFile:
     collected_file: CollectedFile
-    raw_bytes: bytes
     text: str
     digest: FileDigest
+    decode_error: str | None = None
 
     @property
     def abs_path(self) -> Path:

@@ -58,7 +58,7 @@
         "tags": { "type": "array", "items": { "type": "string" } },
         "dependencies": { "type": "array" },
         "parent_id": { "type": ["string", "null"] },
-        "children": { "type": "array" },
+        "children": { "type": "array", "items": { "$ref": "#/$defs/nodeBase" } },
         "attributes": { "type": "object" },
         "metrics": { "type": "object" }
       },

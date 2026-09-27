@@ -1,16 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
 from repogpt.domain.files import ParsedFile, SkippedFile
-
-
-@dataclass(frozen=True)
-class OutputTarget:
-    to_stdout: bool = False
-    path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -22,9 +16,9 @@ class AnalysisRequest:
     projection: Literal["ast", "code_units"] = "ast"
     format: Literal["json", "ndjson"] = "json"
     flatten_kind: Literal["node", "file"] = "node"
-    output_target: OutputTarget = field(default_factory=OutputTarget)
-    log_level: Literal["INFO", "DEBUG"] = "INFO"
     fail_fast: bool = False
+    repo_key: str | None = None
+    replace_scope: bool = False
 
 
 @dataclass(frozen=True)
@@ -32,9 +26,6 @@ class AnalysisStats:
     total_files: int
     ok_files: int
     failed_files: int
-    skipped_files: int
-    emitted_records: int | None = None
-    emitted_documents: int | None = None
 
 
 @dataclass(frozen=True)

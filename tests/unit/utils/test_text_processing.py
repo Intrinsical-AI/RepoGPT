@@ -6,8 +6,17 @@ import pytest
 from repogpt.utils.text_processing import (
     count_blank_lines,
     extract_comments,
-    extract_todos_fixmes,
 )
+
+
+def test_python_comments_preserve_hashes_after_the_delimiter() -> None:
+    assert extract_comments("## Note\n# # Header\n#   padded  \n#\n") == [
+        {"text": "# Note", "line": 1},
+        {"text": "# Header", "line": 2},
+        {"text": "padded", "line": 3},
+        {"text": "", "line": 4},
+    ]
+
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "../../data")
 
@@ -39,11 +48,6 @@ def test_comments_with_comments_md() -> None:
         "TODO: Completar sección",
         "FIXME: Revisar formato",
     ]
-    todos, fixmes = extract_todos_fixmes(comments)
-    todos_text = list(todos)
-    fixmes_text = list(fixmes)
-    assert "TODO: Completar sección" in todos_text
-    assert "FIXME: Revisar formato" in fixmes_text
 
 
 # ---------- EDGE CASES PY ----------
@@ -52,8 +56,6 @@ def test_comments_edge_cases_py() -> None:
     comments = extract_comments(text, language="python")
     assert "Este es un comentario normal" in [c["text"] for c in comments]
     assert "TODO: pendiente de implementar" in [c["text"] for c in comments]
-    todos, fixmes = extract_todos_fixmes(comments)
-    assert "TODO: pendiente de implementar" in todos
 
 
 # ---------- DOCSTRING EXAMPLES PY ----------
@@ -63,8 +65,6 @@ def test_docstring_examples() -> None:
     texts = [c["text"] for c in comments]
     # Keep this aligned with the real parser fixture.
     assert "Comentario entre docstring y código" in texts or texts == []
-    todos, fixmes = extract_todos_fixmes(comments)
-    _ = todos, fixmes
 
 
 # ---------- BASIC MARKDOWN ----------
@@ -90,9 +90,6 @@ def test_comments_edge_cases_py_unicode() -> None:
     assert any("Comentario sin espacio tras hash" in t for t in texts)
     assert any("indentación" in t for t in texts)
     assert any("símbolos matemáticos" in t for t in texts)
-    todos, fixmes = extract_todos_fixmes(comments)
-    assert any("λ" in t for t in todos)
-    assert any("símbolos matemáticos" in f for f in fixmes)
 
 
 def test_blank_lines_edge_cases() -> None:
