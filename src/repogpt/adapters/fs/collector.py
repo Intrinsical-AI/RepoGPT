@@ -19,11 +19,8 @@ DEFAULT_IGNORES: set[str] = {
     "__pycache__",
     ".venv",
     "venv",
-    "env",
     ".mypy_cache",
     ".pytest_cache",
-    "dist",
-    "build",
     "node_modules",
     ".tox",
     ".DS_Store",
@@ -59,6 +56,19 @@ def ignore_reason(p: Path, repo_root: Path, spec: pathspec.PathSpec | None = Non
         return "symlink"
     if spec and _matches_pathspec(spec, rel, is_dir=stat.S_ISDIR(mode)):
         return "repogptignore"
+    if stat.S_ISDIR(mode):
+        marker = p / "pyvenv.cfg"
+        try:
+            marker_mode = marker.lstat().st_mode
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise CollectionFailure(
+                f"Cannot inspect {marker.relative_to(repo_root)}: {exc}"
+            ) from exc
+        else:
+            if stat.S_ISREG(marker_mode):
+                return "virtualenv"
     return None
 
 
@@ -71,13 +81,21 @@ class DefaultCollector(CollectorPort):
         repo_root = request.repo_root.resolve()
         spec = load_pathspec(repo_root)
         files: list[CollectedFile] = []
-        skipped: list[SkippedFile] = []
-        paths = self._candidate_files(repo_root=repo_root, spec=spec)
+        paths, skipped = self._candidate_files(repo_root=repo_root, spec=spec)
+        enabled_extensions = (
+            set(request.supported_languages)
+            if request.supported_languages is not None
+            else supported_extensions
+        )
+
+        def skip(path: Path, reason: str) -> None:
+            skipped.append(SkippedFile(path, path.relative_to(repo_root).as_posix(), reason))
+
         for path in paths:
             relative_path = path.relative_to(repo_root).as_posix()
             reason = ignore_reason(path, repo_root, spec)
             if reason is not None:
-                skipped.append(SkippedFile(path, relative_path, reason))
+                skip(path, reason)
                 continue
             try:
                 info = path.stat()
@@ -87,45 +105,24 @@ class DefaultCollector(CollectorPort):
                 continue
             extension = path.suffix.lstrip(".").lower()
             if extension not in supported_extensions:
-                skipped.append(
-                    SkippedFile(
-                        abs_path=path,
-                        relative_path=relative_path,
-                        reason="unsupported_extension",
-                    )
-                )
+                skip(path, "unsupported_extension")
+                continue
+            if extension not in enabled_extensions:
+                skip(path, "language_filtered")
                 continue
             if not request.include_tests and self._is_test_path(path, repo_root):
-                skipped.append(
-                    SkippedFile(
-                        abs_path=path,
-                        relative_path=relative_path,
-                        reason="tests_excluded",
-                    )
-                )
+                skip(path, "tests_excluded")
                 continue
             file_size = info.st_size
             if file_size > request.max_file_size:
-                skipped.append(
-                    SkippedFile(
-                        abs_path=path,
-                        relative_path=relative_path,
-                        reason="file_too_large",
-                    )
-                )
+                skip(path, "file_too_large")
                 continue
             try:
                 binary = is_likely_binary(path)
             except OSError as exc:
                 raise CollectionFailure(f"Cannot read {relative_path}: {exc}") from exc
             if binary:
-                skipped.append(
-                    SkippedFile(
-                        abs_path=path,
-                        relative_path=relative_path,
-                        reason="binary_file",
-                    )
-                )
+                skip(path, "binary_file")
                 continue
             files.append(
                 CollectedFile(
@@ -134,15 +131,16 @@ class DefaultCollector(CollectorPort):
                     language=extension,
                 )
             )
-        return files, skipped
+        return files, sorted(skipped, key=lambda item: item.relative_path)
 
     def _candidate_files(
         self,
         *,
         repo_root: Path,
         spec: pathspec.PathSpec | None,
-    ) -> list[Path]:
+    ) -> tuple[list[Path], list[SkippedFile]]:
         candidates: list[Path] = []
+        skipped: list[SkippedFile] = []
 
         def onerror(error: OSError) -> None:
             raise CollectionFailure(
@@ -154,21 +152,31 @@ class DefaultCollector(CollectorPort):
             kept_dirs: list[str] = []
             for dirname in sorted(dirnames):
                 path = current_dir / dirname
-                if ignore_reason(path, repo_root, spec) is None:
+                reason = ignore_reason(path, repo_root, spec)
+                if reason is None:
                     kept_dirs.append(dirname)
+                else:
+                    skipped.append(
+                        SkippedFile(path, path.relative_to(repo_root).as_posix(), reason)
+                    )
             dirnames[:] = kept_dirs
 
-            for filename in sorted(filenames):
+            for filename in filenames:
                 candidates.append(current_dir / filename)
 
-        return sorted(
-            candidates,
-            key=lambda path: path.relative_to(repo_root).as_posix(),
+        return (
+            sorted(candidates, key=lambda path: path.relative_to(repo_root).as_posix()),
+            skipped,
         )
 
     def _is_test_path(self, path: Path, repo_root: Path) -> bool:
         rel_parts = path.relative_to(repo_root).parts
-        return "tests" in rel_parts or path.name.startswith(("test_", "test-"))
+        return (
+            any(part in {"test", "tests"} for part in rel_parts[:-1])
+            or path.name.startswith(("test_", "test-"))
+            or path.name.endswith("_test.py")
+            or path.name == "conftest.py"
+        )
 
 
 def _matches_pathspec(spec: pathspec.PathSpec, rel: Path, *, is_dir: bool) -> bool:

@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import dataclasses
 from collections.abc import Iterable
 from typing import Any
 
+from repogpt.adapters.projectors._common import failure_record, file_digest
 from repogpt.domain.analysis import AnalysisRequest, AnalysisResult, AstProjection
 from repogpt.domain.files import ParsedFile
 from repogpt.ports.projectors import AstProjectorPort
-from repogpt.utils.tree_utils import flatten_tree
+from repogpt.utils.tree_utils import flatten_tree, node_to_dict
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 
 
 class AstProjector(AstProjectorPort):
@@ -20,7 +20,7 @@ class AstProjector(AstProjectorPort):
             for node in self._yield_node_records(parsed_file, request)
         ]
         failure_records = [
-            self._failure_record(parsed_file)
+            failure_record(parsed_file, schema_version=SCHEMA_VERSION)
             for parsed_file in result.parsed_files
             if parsed_file.failure is not None
         ]
@@ -30,15 +30,13 @@ class AstProjector(AstProjectorPort):
             emitted_records=len(node_records),
         )
         return AstProjection(
-            schema_version=SCHEMA_VERSION,
             json_payload={
                 "schema_version": SCHEMA_VERSION,
-                "repo_root": request.repo_root.resolve().as_posix(),
+                "repo_root": request.repo_root.as_posix(),
                 "stats": summary["stats"],
                 "failures": failure_records,
                 "records": node_records,
             },
-            ndjson_records=[*node_records, *failure_records, summary],
         )
 
     def _yield_node_records(
@@ -51,7 +49,7 @@ class AstProjector(AstProjectorPort):
         nodes = (
             flatten_tree(parsed_file.root)
             if request.flatten_kind == "node"
-            else [dataclasses.asdict(parsed_file.root)]
+            else [node_to_dict(parsed_file.root, recursive=True)]
         )
         return [
             {
@@ -59,27 +57,10 @@ class AstProjector(AstProjectorPort):
                 "schema_version": SCHEMA_VERSION,
                 **node,
                 "path": str(parsed_file.relative_path or node.get("path") or ""),
-                "file": {
-                    "size": parsed_file.digest.size,
-                    "sha256": parsed_file.digest.sha256,
-                },
+                "file": file_digest(parsed_file.digest),
             }
             for node in nodes
         ]
-
-    def _failure_record(self, parsed_file: ParsedFile) -> dict[str, Any]:
-        assert parsed_file.failure is not None
-        return {
-            "record_type": "failure",
-            "schema_version": SCHEMA_VERSION,
-            "path": parsed_file.relative_path,
-            "language": parsed_file.language,
-            "error": parsed_file.failure.message,
-            "file": {
-                "size": parsed_file.digest.size,
-                "sha256": parsed_file.digest.sha256,
-            },
-        }
 
     def _summary_record(
         self,
@@ -91,7 +72,7 @@ class AstProjector(AstProjectorPort):
         return {
             "record_type": "summary",
             "schema_version": SCHEMA_VERSION,
-            "repo_root": request.repo_root.resolve().as_posix(),
+            "repo_root": request.repo_root.as_posix(),
             "stats": {
                 "total_files": result.stats.total_files,
                 "ok_files": result.stats.ok_files,

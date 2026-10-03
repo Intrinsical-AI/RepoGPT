@@ -3,11 +3,11 @@
 This roadmap starts after the current shipped baseline:
 
 - CLI and MCP stdio interfaces
-- AST export (`schema_version: "1"`)
-- `code-units` (`schema_version: "4"`)
-- public JSON Schemas for AST v1 and `code-units` v4
+- AST export (`schema_version: "2"`)
+- `code-units` (`schema_version: "5"`)
+- public JSON Schemas for AST v2 and `code-units` v5
 - golden artifact schema validation in integration tests
-- built-in retrieval profile comparison for `flat_rag_v1` and `structured_rag_v1`
+- built-in retrieval profile comparison for `flat_rag_v2` and `structured_rag_v2`
 
 The items below are forward-looking only.
 

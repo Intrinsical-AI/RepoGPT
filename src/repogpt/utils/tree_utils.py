@@ -3,30 +3,31 @@ from typing import Any
 from repogpt.domain.nodes import CodeNode
 
 
-def _node_to_dict(node: CodeNode) -> dict[str, Any]:
-    return {
+def node_to_dict(node: CodeNode, *, recursive: bool = False) -> dict[str, Any]:
+    record: dict[str, Any] = {
         "id": node.id,
         "type": node.type,
         "name": node.name,
         "language": node.language,
         "path": node.path,
         "start_line": node.start_line,
+        "start_column": node.start_column,
         "end_line": node.end_line,
         "docstring": node.docstring,
         "comments": [dict(comment) for comment in node.comments],
         "tags": list(node.tags),
-        "dependencies": [
-            dict(dependency) if isinstance(dependency, dict) else dependency
-            for dependency in node.dependencies
-        ],
+        "dependencies": [dict(dependency) for dependency in node.dependencies],
         "parent_id": node.parent_id,
-        "attributes": dict(node.attributes),
-        "metrics": dict(node.metrics),
     }
+    if recursive:
+        record["children"] = [node_to_dict(child, recursive=True) for child in node.children]
+    record["attributes"] = dict(node.attributes)
+    record["metrics"] = dict(node.metrics)
+    return record
 
 
 def flatten_tree(root: CodeNode) -> list[dict[str, Any]]:
-    return [_node_to_dict(node) for node in iter_nodes(root)]
+    return [node_to_dict(node) for node in iter_nodes(root)]
 
 
 def iter_nodes(root: CodeNode) -> list[CodeNode]:
@@ -41,8 +42,3 @@ def iter_nodes(root: CodeNode) -> list[CodeNode]:
         nodes.append(node)
         stack.extend(reversed(node.children))
     return nodes
-
-
-def all_comments(root: CodeNode) -> list[dict[str, Any]]:
-    """Return all comments from every node in the tree."""
-    return [dict(c) for n in iter_nodes(root) for c in n.comments]

@@ -37,7 +37,7 @@ def extract_comments(content: str, language: str = "python") -> list[dict[str, A
                             "line": start[0],
                         }
                     )
-        except Exception as exc:
+        except (tokenize.TokenError, SyntaxError) as exc:
             logger.debug(
                 "python comment extraction failed",
                 error=str(exc),

@@ -4,16 +4,18 @@ import json
 from pathlib import Path
 from typing import Any
 
+from repogpt.domain.code_units import KIND, SCHEMA_VERSION
+
 
 def load_documents(path: Path) -> list[dict[str, Any]]:
-    """Load v4 retrieval inputs, rejecting malformed entries and duplicate identities."""
+    """Load code-units v5 inputs, rejecting malformed entries and duplicate identities."""
     payload = json.loads(path.read_text(encoding="utf-8"))
     if (
         not isinstance(payload, dict)
-        or payload.get("schema_version") != "4"
-        or payload.get("kind") != "code-units"
+        or payload.get("schema_version") != SCHEMA_VERSION
+        or payload.get("kind") != KIND
     ):
-        raise ValueError("expected a code-units v4 object")
+        raise ValueError("expected a code-units v5 object")
     documents = payload.get("documents")
     if not isinstance(documents, list):
         raise ValueError("expected a documents array")

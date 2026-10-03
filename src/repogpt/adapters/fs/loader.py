@@ -24,7 +24,7 @@ class DefaultLoader(LoaderPort):
                 encoding, _ = tokenize.detect_encoding(io.BytesIO(detection_bytes).readline)
                 text = raw_bytes.decode(encoding)
             else:
-                text = raw_bytes.decode("utf-8", errors="replace")
+                text = raw_bytes.decode("utf-8-sig", errors="replace")
         except (UnicodeError, SyntaxError, LookupError) as exc:
             text = ""
             decode_error = f"{type(exc).__name__}: {exc}"

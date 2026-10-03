@@ -20,15 +20,15 @@ Runtime pipeline:
 Key properties:
 
 - Supported languages in the current contract: Python (`.py`) and Markdown (`.md`)
-- Public artifact contracts: AST JSON/NDJSON (`schema_version: "1"`) and `code-units` JSON (`schema_version: "4"`)
-- Deterministic collection, projection, and snapshot-scoped identifiers
+- Public artifact contracts: AST JSON/NDJSON (`schema_version: "2"`) and `code-units` JSON (`schema_version: "5"`)
+- Deterministic collection, origin-based internal node IDs, and semantic code-unit IDs
 - Structured logs on STDERR, artifact data on STDOUT or file output
 - Explicit partial-failure reporting with clean exit codes
-- Retrieval profile helpers for `flat_rag_v1` and `structured_rag_v1`
+- Retrieval profile helpers for `flat_rag_v2` and `structured_rag_v2`
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for contract and architecture details, and [ROADMAP.md](ROADMAP.md) for future work only.
 
-Version 0.9.0 changes repository identities and replacement defaults while retaining AST v1 and code-units v4. See [CHANGELOG.md](CHANGELOG.md) for the current behavior and removed surface.
+The current source tree introduces breaking AST v2 and code-units v5 contracts. Earlier artifacts must be regenerated and downstream indexes reingested; there are no compatibility aliases or v4 readers in this contract.
 
 ## Installation
 
@@ -70,7 +70,7 @@ uv run python benchmark_retrieval_profiles.py code_units.json "helper"
 | `--stdout` | off | Write the artifact to STDOUT instead of a file. |
 | `-o, --output PATH` | depends on projection | Defaults to `analysis.json` for AST and `code_units.json` for `code-units`. |
 | `--languages "py,md"` | all supported parsers | Comma-separated, case-insensitive whitelist of enabled languages. |
-| `--include-tests` | off | Include paths with a `tests` component and filenames starting with `test_` or `test-`, for every supported extension. |
+| `--include-tests` | off | Include test paths and filenames described under collection rules. |
 | `--log-level {INFO,DEBUG}` | `INFO` | Structured log level for STDERR output. |
 | `--fail-fast` | off | Stop on the first parse error and return exit code `1`. |
 | `--repo-key KEY` | derived from canonical absolute path | Code-units only. Explicit portable identity matching `[a-z0-9][a-z0-9._-]{0,127}`. |
@@ -96,7 +96,7 @@ Notes:
 | `2` | Invalid arguments (no artifact), or per-file parse/decode failures with an emitted artifact. |
 | `3` | Invalid repository, collection/read/write failure, or refused scope replacement. |
 
-Parse/decode failures normally emit an artifact and return `2`, or `1` with `--fail-fast`. An explicit replacement request takes precedence: incomplete results return `3` without emitting an artifact. Collection and input-read failures also return `3` before any output. File output is written to a temporary file in the destination directory, then atomically replaced; a failed write preserves the prior artifact and existing file permissions are retained.
+Parse/decode failures normally emit an artifact and return `2`, or `1` with `--fail-fast`. An explicit replacement request takes precedence: incomplete results return `3` without emitting an artifact. Collection and input-read failures also return `3` before any output. File output is written to a temporary file in the destination directory, then atomically replaced; a failed write preserves the prior artifact. Existing file permissions are retained, while new files follow the process umask.
 
 Closing a pipe early, as with `repogpt ... --stdout | head -c 200`, returns `0` without a write-error diagnostic or shutdown traceback. This status acknowledges the consumer's early close; it does not certify delivery of a complete artifact or a complete analysis. Other output I/O errors return `3` with one destination-specific diagnostic.
 
@@ -106,19 +106,19 @@ RepoGPT collects files with deterministic pruned traversal plus stable relative-
 
 Built-in ignores are always excluded:
 
-`.git`, `.hg`, `.svn`, `__pycache__`, `.venv`, `venv`, `env`, `.mypy_cache`, `.pytest_cache`, `dist`, `build`, `node_modules`, `.tox`, `.DS_Store`, `.idea`, `.vscode`
+`.git`, `.hg`, `.svn`, `__pycache__`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `node_modules`, `.tox`, `.DS_Store`, `.idea`, `.vscode`
 
 Additional collection rules:
 
 - `.repogptignore` uses gitignore-style matching via `pathspec`
-- ignored directories are pruned before descent and are not expanded into per-file skips
-- test paths are skipped unless `--include-tests` is set
+- ignored directories are pruned before descent and recorded once, without per-file skips
+- `test/`, `tests/`, `test_*`, `test-*`, `*_test.py`, and `conftest.py` paths are skipped unless `--include-tests` is set
 - files larger than `2_000_000` bytes are skipped
 - symlinks are skipped
 - likely binary files are skipped
-- unsupported extensions are skipped before parsing
+- unsupported extensions and supported languages excluded by `--languages` have distinct skip reasons
 
-The test-name rule is case-sensitive and does not recognize suffixes such as `*_test.py`. Use `.repogptignore` for additional project-specific test conventions.
+The test-name rule is case-sensitive. `env/`, `build/`, and `dist/` are indexable unless excluded in `.repogptignore`; this repository explicitly excludes its own generated copies there. A directory containing a regular `pyvenv.cfg` is pruned as a virtual environment regardless of its name. RepoGPT does not read `.gitignore`.
 
 A missing `.repogptignore` is allowed. An existing file that cannot be read or parsed aborts collection; its exclusions are never silently disabled. Traversal, stat, binary-probe, and source-read errors also abort the run.
 
@@ -130,6 +130,11 @@ Example `.repogptignore`:
 # generated documentation
 docs/build/
 
+# repository-local environments and generated copies
+/env/
+/build/
+/dist/
+
 # large assets
 *.png
 *.pdf
@@ -137,7 +142,7 @@ docs/build/
 
 ## Artifact contracts
 
-### AST export (`schema_version: "1"`)
+### AST export (`schema_version: "2"`)
 
 AST export is the direct structural projection of the internal `CodeNode` tree.
 
@@ -147,15 +152,19 @@ AST export is the direct structural projection of the internal `CodeNode` tree.
 
 Both JSON and NDJSON support both AST layouts. Nested `children` in `--flatten file` are recursively validated nodes, without the `record_type`, `schema_version`, or `file` wrapper fields of a top-level record.
 
+Every node includes a zero-based `start_column` in original source characters. Internal node IDs derive from relative path, node type, `start_line`, and `start_column`; changing an ending span or parent ID alone does not change an ID. Moving a declaration or editing text before it on the same line can change its ID.
+
+Decorated Python declarations begin at the first `@` token, including multiline decorators. Exports made with the earlier expression-based origin may have incorrect spans and IDs for multiline decorators; regenerate affected exports. The AST v2 and code-units v5 formats remain unchanged.
+
 Python decoding honors UTF-8 BOMs and encoding cookies, with strict decoding and failures retaining the original byte digest. Spans and comment positions use physical LF, CRLF, or CR lines; other Unicode separators do not add lines. Python traversal includes control-flow branches, exception handlers, finalizers, and match cases. Import attributes include the integer `import_level` (`0` for absolute imports).
 
 Python comment text removes one leading `#` and trims leading spaces and trailing whitespace; further `#` characters are preserved. Tags are parser-specific: Markdown tags its module with `TODO`/`FIXME` found in HTML comments; Python exposes comments without deriving these tags. Python signatures are structural summaries, not a source-formatting or PEP 8 contract.
 
-Markdown fences accept three or more backticks or tildes, up to three leading spaces, and close only with the same character, sufficient length, and trailing spaces/tabs. Headings and links inside fences are not parsed. Link attributes include a zero-based `start_column` used in internal IDs.
+Markdown fences accept three or more backticks or tildes, up to three leading spaces, and close only with the same character, sufficient length, and trailing spaces/tabs. Headings, links, and HTML comments inside fences are not extracted. ATX headings allow up to three leading spaces, list-item headings, empty titles, and optional closing hashes. Link extraction skips complete inline code spans within recognized text blocks, including spans across physical lines, as well as image links; source columns remain character offsets in the original line.
 
-Links in indented code are suppressed, using four-column tab stops and indentation relative to list content. Indentation within a continuing paragraph remains prose. This filtering adds no nodes for indented blocks: `code_block` nodes and their count still describe fences. The Markdown extractor is a structural subset, not a complete CommonMark renderer.
+Links in indented code are suppressed, using four-column tab stops and indentation relative to list content. Indentation within a continuing paragraph remains prose. This filtering adds no nodes for indented blocks: `code_block` nodes and their count still describe fences. The maintained Markdown parser is a structural subset, not a complete CommonMark renderer.
 
-### Code-units (`schema_version: "4"`)
+### Code-units (`schema_version: "5"`)
 
 `code-units` is the retrieval-oriented projection for downstream indexing and lightweight structured expansion.
 
@@ -181,6 +190,7 @@ Each document exposes retrieval-facing fields at the top level. `metadata` conta
 - `depth`
 - `ancestor_path`
 - `content_hash`
+- `content_ranges` on module documents
 - `docstring_present`
 - `has_children`
 
@@ -188,8 +198,9 @@ Contract notes:
 
 - `external_id` is the semantic public identifier for a projected document
 - `snapshot_id` is a repository-snapshot marker derived from collected file hashes
-- `content_hash` is `sha256(content)` for the exact emitted span
-- if a file produces no selected units for its language, the projector falls back to the root module document
+- `content_hash` is `sha256(content)` for the exact emitted text. Non-module content is the exact physical-line span; module content concatenates only lines outside selected non-module spans.
+- Every parsed file emits a module document. Its `content_ranges` lists those residual physical-line intervals in order; an empty list and empty `content` are valid for a structural module. Its `start_line` and `end_line` bound the file, not the residual text.
+- Every non-module `container_id` resolves to its nearest emitted ancestor. Empty structural modules remain in the artifact but are not retrieval seeds or expansion results.
 
 Repository identity and replacement:
 
@@ -204,8 +215,8 @@ Repository identity and replacement:
 
 RepoGPT ships JSON Schema files for the public artifact contracts:
 
-- `src/repogpt/schemas/ast-v1.schema.json`: AST JSON envelopes and AST NDJSON record variants
-- `src/repogpt/schemas/code-units-v4.schema.json`: `code-units` JSON envelopes
+- `src/repogpt/schemas/ast-v2.schema.json`: AST JSON envelopes and AST NDJSON record variants
+- `src/repogpt/schemas/code-units-v5.schema.json`: `code-units` JSON envelopes
 
 Both schemas are included in the wheel and source distribution. Installed code can read them with `importlib.resources.files("repogpt").joinpath("schemas").joinpath(schema_name).read_text(encoding="utf-8")`. These schemas are contract aids for consumers and tests. They are validated against golden fixtures in the test suite via the dev-only `jsonschema` dependency; RepoGPT does not validate emitted artifacts at runtime.
 
@@ -266,18 +277,18 @@ Minimal request example:
 
 RepoGPT includes a small benchmark path for comparing two retrieval presets over a `code-units` artifact:
 
-- `flat_rag_v1`: rank documents and return the top `k` seeds without expansion
-- `structured_rag_v1`: rank documents, keep the same seeds, then add at most one enclosing container hop per seed when available
+- `flat_rag_v2`: rank matching, retrievable documents and return the top `k` seeds without expansion
+- `structured_rag_v2`: keep the same seeds, then add at most one enclosing retrievable container hop per seed when available
 
 The benchmark path is intended for contract-level comparison, not as a full retrieval engine or production-quality relevance evaluation.
 
-`--top-k` accepts integers greater than or equal to zero; zero produces empty bundles. The benchmark and MCP comparison share one artifact loader that requires a code-units v4 envelope, validates the fields used by retrieval, and rejects malformed entries and duplicate `external_id` values.
+`--top-k` accepts integers greater than or equal to zero; zero and queries without matches produce empty bundles. Ranking ignores empty structural modules, uses exact symbols only when present, and breaks score ties by shorter qualified name and then ascending external ID. The benchmark and MCP comparison share one artifact loader that requires a code-units v5 envelope, validates the fields used by retrieval, and rejects malformed entries and duplicate `external_id` values.
 
 ## Developer benchmark scripts
 
 RepoGPT includes two root-level diagnostic scripts:
 
-- `benchmark_retrieval_profiles.py`: compares `flat_rag_v1` and `structured_rag_v1` over a `code-units` artifact
+- `benchmark_retrieval_profiles.py`: compares `flat_rag_v2` and `structured_rag_v2` over a `code-units` artifact
 - `benchmark_tree_utils.py`: runs synthetic measurements for tree traversal, flattening, and Python comment association
 
 These scripts are developer diagnostics, not public runtime interfaces.

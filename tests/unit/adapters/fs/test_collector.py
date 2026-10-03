@@ -37,6 +37,7 @@ def test_collect_respects_repogptignore(tmp_path: Path) -> None:
     assert files == []
     assert sorted(item.relative_path for item in skipped) == [
         ".repogptignore",
+        "generated",
         "keep.py",
         "skip.py",
     ]
@@ -116,7 +117,7 @@ def test_collect_with_empty_languages_returns_no_files(tmp_path: Path) -> None:
     assert sorted(item.relative_path for item in skipped) == ["a.py", "b.md"]
 
 
-def test_collect_skipped_does_not_include_ignored_directories(tmp_path: Path) -> None:
+def test_collect_records_pruned_directory_without_descending(tmp_path: Path) -> None:
     ignored_dir = tmp_path / ".git"
     ignored_dir.mkdir()
     (ignored_dir / "config").write_text("test", encoding="utf-8")
@@ -126,7 +127,7 @@ def test_collect_skipped_does_not_include_ignored_directories(tmp_path: Path) ->
         {"py"},
     )
 
-    assert skipped == []
+    assert [(item.relative_path, item.reason) for item in skipped] == [(".git", "default_ignore")]
 
 
 def test_ignore_reason_reports_why_a_path_is_skipped(tmp_path: Path) -> None:
@@ -151,6 +152,81 @@ def test_collect_excludes_tests_uses_relative_path(tmp_path: Path) -> None:
 
     assert {item.relative_path for item in files} == {"src.py"}
     assert {item.relative_path for item in skipped} == {"test_src.py", "tests/conftest.py"}
+
+
+def test_collect_excludes_common_test_names(tmp_path: Path) -> None:
+    for dirname in ("test", "pkg"):
+        (tmp_path / dirname).mkdir()
+    for relative_path in (
+        "test/helper.py",
+        "pkg/helper_test.py",
+        "pkg/conftest.py",
+        "pkg/contest.py",
+    ):
+        (tmp_path / relative_path).write_text("value = 1\n", encoding="utf-8")
+
+    files, skipped = DefaultCollector().collect(AnalysisRequest(repo_root=tmp_path), {"py"})
+
+    assert [item.relative_path for item in files] == ["pkg/contest.py"]
+    assert {item.relative_path for item in skipped if item.reason == "tests_excluded"} == {
+        "test/helper.py",
+        "pkg/helper_test.py",
+        "pkg/conftest.py",
+    }
+
+
+def test_collect_distinguishes_language_filter_from_unsupported_extension(tmp_path: Path) -> None:
+    (tmp_path / "sample.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "guide.md").write_text("# Guide\n", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("notes\n", encoding="utf-8")
+
+    files, skipped = DefaultCollector().collect(
+        AnalysisRequest(repo_root=tmp_path, supported_languages=["py"]), {"py", "md"}
+    )
+
+    assert [item.relative_path for item in files] == ["sample.py"]
+    assert {item.relative_path: item.reason for item in skipped} == {
+        "guide.md": "language_filtered",
+        "notes.txt": "unsupported_extension",
+    }
+
+
+def test_env_build_and_dist_are_included_unless_explicitly_ignored(tmp_path: Path) -> None:
+    for dirname in ("env", "build", "dist"):
+        directory = tmp_path / dirname
+        directory.mkdir()
+        (directory / "module.py").write_text("value = 1\n", encoding="utf-8")
+
+    files, _ = DefaultCollector().collect(AnalysisRequest(repo_root=tmp_path), {"py"})
+    assert {item.relative_path for item in files} == {
+        "env/module.py",
+        "build/module.py",
+        "dist/module.py",
+    }
+
+    (tmp_path / ".repogptignore").write_text("/env/\n/build/\n/dist/\n", encoding="utf-8")
+    files, skipped = DefaultCollector().collect(AnalysisRequest(repo_root=tmp_path), {"py"})
+    assert files == []
+    assert {item.relative_path for item in skipped if item.reason == "repogptignore"} == {
+        "env",
+        "build",
+        "dist",
+    }
+
+
+def test_collect_prunes_virtualenv_by_marker_regardless_of_name(tmp_path: Path) -> None:
+    environment = tmp_path / "custom_environment"
+    environment.mkdir()
+    (environment / "pyvenv.cfg").write_text("home = /usr/bin\n", encoding="utf-8")
+    (environment / "lib.py").write_text("value = 1\n", encoding="utf-8")
+    ordinary = tmp_path / "env"
+    ordinary.mkdir()
+    (ordinary / "module.py").write_text("value = 2\n", encoding="utf-8")
+
+    files, skipped = DefaultCollector().collect(AnalysisRequest(repo_root=tmp_path), {"py"})
+
+    assert [item.relative_path for item in files] == ["env/module.py"]
+    assert (skipped[0].relative_path, skipped[0].reason) == ("custom_environment", "virtualenv")
 
 
 def test_collect_fails_if_file_disappears_during_stat(tmp_path: Path) -> None:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+import io
+import tokenize
 from collections.abc import Sequence
 from typing import Any
 
@@ -9,35 +11,75 @@ import structlog
 from repogpt.domain.files import LoadedFile
 from repogpt.domain.nodes import CodeNode
 from repogpt.ports.parsers import ParserPort
-from repogpt.utils.node_utils import stable_node_id
+from repogpt.utils.node_utils import new_node
 from repogpt.utils.text_processing import count_blank_lines, extract_comments, physical_lines
 
 logger = structlog.get_logger(__name__)
+
+
+def _character_column(line: str, byte_column: int) -> int:
+    """Python AST columns count UTF-8 bytes; exported columns count characters."""
+    return len(line.encode("utf-8")[:byte_column].decode("utf-8"))
+
+
+def _decorator_origins(source_lines: list[str]) -> dict[tuple[int, int], tuple[int, int]]:
+    """Map declaration keywords to the first decorator's actual @ token."""
+    origins: dict[tuple[int, int], tuple[int, int]] = {}
+    pending: tuple[int, int] | None = None
+    statement_start = True
+    # Normalize physical newlines for tokenize without changing line/character coordinates.
+    for token in tokenize.generate_tokens(io.StringIO("\n".join(source_lines)).readline):
+        if token.type == tokenize.NEWLINE:
+            statement_start = True
+        elif (
+            token.type
+            not in {
+                tokenize.NL,
+                tokenize.COMMENT,
+                tokenize.INDENT,
+                tokenize.DEDENT,
+                tokenize.ENDMARKER,
+            }
+            and statement_start
+        ):
+            statement_start = False
+            if token.type == tokenize.OP and token.string == "@":
+                if pending is None:
+                    pending = token.start
+            else:
+                if token.type == tokenize.NAME and token.string in {"def", "async", "class"}:
+                    if pending is not None:
+                        origins[token.start] = pending
+                pending = None
+    return origins
+
+
+def _declaration_origin(
+    node: ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef,
+    source_lines: list[str],
+    decorator_origins: dict[tuple[int, int], tuple[int, int]],
+) -> tuple[int, int]:
+    origin = node.lineno, _character_column(source_lines[node.lineno - 1], node.col_offset)
+    return decorator_origins[origin] if node.decorator_list else origin
 
 
 class PythonParser(ParserPort):
     def parse(self, loaded_file: LoadedFile) -> CodeNode:
         path = loaded_file.abs_path
         content = loaded_file.text
-        tree = ast.parse(content, filename=str(path))
+        tree = ast.parse(content, filename=loaded_file.relative_path)
         relative_path = loaded_file.relative_path
         lines = physical_lines(content)
+        decorator_origins = _decorator_origins(lines)
         total_lines = len(lines) or 1
 
-        root = CodeNode(
-            id=stable_node_id(
-                path=relative_path,
-                type_="module",
-                name=path.stem,
-                start_line=1,
-                end_line=total_lines,
-                parent_id=None,
-            ),
-            type="module",
-            name=path.stem,
-            language="py",
+        root = new_node(
+            type_="module",
             path=relative_path,
             start_line=1,
+            start_column=0,
+            name=path.stem,
+            language="py",
             end_line=total_lines,
             docstring=ast.get_docstring(tree),
             metrics={
@@ -47,7 +89,13 @@ class PythonParser(ParserPort):
             attributes={"relative_path": relative_path},
         )
 
-        self._visit_sequence(tree.body, parent_node=root, relative_path=relative_path)
+        self._visit_sequence(
+            tree.body,
+            parent_node=root,
+            relative_path=relative_path,
+            source_lines=lines,
+            decorator_origins=decorator_origins,
+        )
         self._associate_comments(root, extract_comments(content, language="python"))
         return root
 
@@ -57,12 +105,16 @@ class PythonParser(ParserPort):
         *,
         parent_node: CodeNode,
         relative_path: str,
+        source_lines: list[str],
+        decorator_origins: dict[tuple[int, int], tuple[int, int]],
     ) -> None:
         for child in nodes:
             code_node = self._build_node(
                 node=child,
                 parent_node=parent_node,
                 relative_path=relative_path,
+                source_lines=source_lines,
+                decorator_origins=decorator_origins,
             )
             if code_node is None:
                 nested_parent = parent_node
@@ -71,7 +123,11 @@ class PythonParser(ParserPort):
                 nested_parent = code_node
             nested_nodes = self._block_statements(child)
             self._visit_sequence(
-                nested_nodes, parent_node=nested_parent, relative_path=relative_path
+                nested_nodes,
+                parent_node=nested_parent,
+                relative_path=relative_path,
+                source_lines=source_lines,
+                decorator_origins=decorator_origins,
             )
 
     def _block_statements(self, node: ast.AST) -> list[ast.stmt]:
@@ -89,42 +145,38 @@ class PythonParser(ParserPort):
         node: ast.stmt,
         parent_node: CodeNode,
         relative_path: str,
+        source_lines: list[str],
+        decorator_origins: dict[tuple[int, int], tuple[int, int]],
     ) -> CodeNode | None:
-        if isinstance(node, ast.Import):
+        if isinstance(node, ast.Import | ast.ImportFrom):
             return self._make_import_node(
-                module=None,
+                module=node.module if isinstance(node, ast.ImportFrom) else None,
                 aliases=node.names,
-                import_kind="import",
-                import_level=0,
+                import_kind="from" if isinstance(node, ast.ImportFrom) else "import",
+                import_level=node.level if isinstance(node, ast.ImportFrom) else 0,
                 lineno=node.lineno,
-                end_lineno=getattr(node, "end_lineno", node.lineno),
-                col_offset=node.col_offset,
-                parent_node=parent_node,
-                relative_path=relative_path,
-            )
-        if isinstance(node, ast.ImportFrom):
-            return self._make_import_node(
-                module=node.module,
-                aliases=node.names,
-                import_kind="from",
-                import_level=node.level,
-                lineno=node.lineno,
-                end_lineno=getattr(node, "end_lineno", node.lineno),
-                col_offset=node.col_offset,
+                end_lineno=node.end_lineno or node.lineno,
+                start_column=_character_column(source_lines[node.lineno - 1], node.col_offset),
                 parent_node=parent_node,
                 relative_path=relative_path,
             )
         if isinstance(node, ast.ClassDef):
+            start_line, start_column = _declaration_origin(node, source_lines, decorator_origins)
             return self._make_class_node(
                 node=node,
                 parent_node=parent_node,
                 relative_path=relative_path,
+                start_line=start_line,
+                start_column=start_column,
             )
         if isinstance(node, ast.AsyncFunctionDef | ast.FunctionDef):
+            start_line, start_column = _declaration_origin(node, source_lines, decorator_origins)
             return self._make_callable_node(
                 node=node,
                 parent_node=parent_node,
                 relative_path=relative_path,
+                start_line=start_line,
+                start_column=start_column,
             )
         return None
 
@@ -137,7 +189,7 @@ class PythonParser(ParserPort):
         import_level: int,
         lineno: int,
         end_lineno: int,
-        col_offset: int,
+        start_column: int,
         parent_node: CodeNode,
         relative_path: str,
     ) -> CodeNode:
@@ -151,22 +203,14 @@ class PythonParser(ParserPort):
             "import_level": import_level,
             "imported_names": imported_names,
         }
-        return CodeNode(
-            id=stable_node_id(
-                path=relative_path,
-                type_="import",
-                name=module or ",".join(alias.name for alias in aliases),
-                start_line=lineno,
-                end_line=end_lineno,
-                parent_id=parent_node.id,
-                start_column=col_offset,
-            ),
-            type="import",
+        return new_node(
+            type_="import",
+            path=relative_path,
+            start_line=lineno,
+            start_column=start_column,
             name=module or None,
             language="py",
-            path=relative_path,
             parent_id=parent_node.id,
-            start_line=lineno,
             end_line=end_lineno,
             attributes=attributes,
             dependencies=imported_names,
@@ -178,23 +222,18 @@ class PythonParser(ParserPort):
         node: ast.ClassDef,
         parent_node: CodeNode,
         relative_path: str,
+        start_line: int,
+        start_column: int,
     ) -> CodeNode:
-        return CodeNode(
-            id=stable_node_id(
-                path=relative_path,
-                type_="class",
-                name=node.name,
-                start_line=node.lineno,
-                end_line=getattr(node, "end_lineno", node.lineno),
-                parent_id=parent_node.id,
-            ),
-            type="class",
+        return new_node(
+            type_="class",
+            path=relative_path,
+            start_line=start_line,
+            start_column=start_column,
             name=node.name,
             language="py",
-            path=relative_path,
             parent_id=parent_node.id,
-            start_line=node.lineno,
-            end_line=getattr(node, "end_lineno", node.lineno),
+            end_line=node.end_lineno or node.lineno,
             docstring=ast.get_docstring(node),
             attributes={
                 "bases": [self._expr_to_source(base) for base in node.bases],
@@ -208,29 +247,25 @@ class PythonParser(ParserPort):
         node: ast.FunctionDef | ast.AsyncFunctionDef,
         parent_node: CodeNode,
         relative_path: str,
+        start_line: int,
+        start_column: int,
     ) -> CodeNode:
         node_type = "method" if parent_node.type == "class" else "function"
         params = self._extract_params(node.args)
         returns = self._expr_to_source(node.returns)
-        signature = f"{node.name}({ast.unparse(node.args)})"
+        arguments_source = self._expr_to_source(node.args)
+        signature = f"{node.name}({arguments_source if arguments_source is not None else '...'})"
         if returns:
             signature = f"{signature} -> {returns}"
-        return CodeNode(
-            id=stable_node_id(
-                path=relative_path,
-                type_=node_type,
-                name=node.name,
-                start_line=node.lineno,
-                end_line=getattr(node, "end_lineno", node.lineno),
-                parent_id=parent_node.id,
-            ),
-            type=node_type,
+        return new_node(
+            type_=node_type,
+            path=relative_path,
+            start_line=start_line,
+            start_column=start_column,
             name=node.name,
             language="py",
-            path=relative_path,
             parent_id=parent_node.id,
-            start_line=node.lineno,
-            end_line=getattr(node, "end_lineno", node.lineno),
+            end_line=node.end_lineno or node.lineno,
             docstring=ast.get_docstring(node),
             attributes={
                 "is_async": isinstance(node, ast.AsyncFunctionDef),
@@ -267,7 +302,7 @@ class PythonParser(ParserPort):
                     "default": None,
                 }
             )
-        for kwonly_arg, kw_default in zip(args.kwonlyargs, args.kw_defaults, strict=False):
+        for kwonly_arg, kw_default in zip(args.kwonlyargs, args.kw_defaults, strict=True):
             default_value = self._expr_to_source(kw_default)
             params.append(
                 {
@@ -293,7 +328,7 @@ class PythonParser(ParserPort):
             return None
         try:
             return ast.unparse(expr)
-        except Exception as exc:  # pragma: no cover
+        except (RecursionError, ValueError) as exc:
             logger.debug(
                 "ast.unparse failed, annotation dropped",
                 node_type=type(expr).__name__,

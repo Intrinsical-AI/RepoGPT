@@ -69,7 +69,10 @@ def test_fs_adapters_do_not_import_parsers() -> None:
 
 
 def test_registry_is_only_source_of_supported_extensions() -> None:
-    imports = _imports_for(REPO_ROOT / "src/repogpt/app/cli.py")
-    assert "repogpt.adapters.parsers.registry" in imports
-    assert "repogpt.adapters.parsers.py_parser" not in imports
-    assert "repogpt.adapters.parsers.md_parser" not in imports
+    runtime_imports = _imports_for(REPO_ROOT / "src/repogpt/runtime.py")
+    cli_imports = _imports_for(REPO_ROOT / "src/repogpt/app/cli.py")
+    assert "repogpt.adapters.parsers.registry" in runtime_imports
+    assert "repogpt.runtime" in cli_imports
+    assert "repogpt.adapters.parsers.registry" not in cli_imports
+    assert "repogpt.adapters.parsers.py_parser" not in cli_imports
+    assert "repogpt.adapters.parsers.md_parser" not in cli_imports

@@ -80,9 +80,9 @@ Built-in tools:
 
 The MCP server reuses the same analysis runtime and language-filter validation semantics as the CLI. It does not introduce a separate artifact contract. Tool results contain `content` and `isError`. JSON text contains the artifact or comparison directly; AST NDJSON uses an array of records. No CLI exit code, empty stderr field, or extra artifact/comparison envelope is carried. Tool execution failures set `isError: true`, including partial/fail-fast artifacts whose file errors remain inspectable.
 
-Both entry points configure stdlib and structlog output on STDERR. Importing the MCP module does not configure logging. Valid notifications receive no responses and do not dispatch tools; invalid envelopes are rejected before notification handling, including envelopes without an ID. Wire validation checks required/unknown fields, booleans, language arrays, and enums without coercion. Handlers apply shared semantic policies such as the repository-key pattern before collection. Error codes distinguish malformed JSON (`-32700`), envelopes (`-32600`), unknown methods (`-32601`), arguments (`-32602`). Failed analysis and refused replacement use MCP tool results with `isError: true`.
+Both entry points configure structlog output on STDERR. Importing the MCP module does not configure logging. Valid notifications receive no responses and do not dispatch tools; invalid envelopes are rejected before notification handling, including envelopes without an ID. Wire validation checks required/unknown fields, booleans, language arrays, and enums without coercion. Handlers apply shared semantic policies such as the repository-key pattern before collection. Error codes distinguish malformed JSON (`-32700`), envelopes (`-32600`), unknown methods (`-32601`), arguments (`-32602`). Failed analysis and refused replacement use MCP tool results with `isError: true`. The advertised MCP 2024-11-05 protocol answers `ping` with `{}`.
 
-CLI rejects conflicting output targets and explicit AST-only flattening options on code-units exports before analysis. Shared request validation runs at the CLI boundary for argument diagnostics and inside the application for non-CLI callers; the policy is defined once.
+CLI rejects conflicting output targets and explicit AST-only flattening options on code-units exports before analysis. The application validates each analysis request once; CLI maps invalid requests to argument diagnostics.
 
 ## 4. Domain and projection model
 
@@ -90,12 +90,12 @@ CLI rejects conflicting output targets and explicit AST-only flattening options 
 
 The internal structural representation is a `CodeNode` tree with:
 
-- deterministic internal IDs for a given repository snapshot and analysis pipeline
+- deterministic internal IDs from relative path, type, and original line/character column
 - containment relations
 - source spans
 - parser-emitted metadata such as comments, tags, metrics, attributes, and dependencies where supported
 
-Internal node IDs are deterministic but snapshot-scoped. They are not the stable public identifier for retrieval-facing consumers.
+Internal node IDs do not depend on names, parents, or ending spans. They change when an origin moves; retrieval-facing documents have separate semantic external IDs.
 
 ### 4.2 Public projections
 
@@ -113,11 +113,11 @@ Projection rules:
 
 ## 5. Public artifact contracts
 
-### 5.1 AST export (`schema_version: "1"`)
+### 5.1 AST export (`schema_version: "2"`)
 
 AST export is the direct structural projection of parsed files.
 
-In both formats, `--flatten node` emits each node as a flat record. `--flatten file` emits one root record per file with its entire nested subtree. Its `children` recursively follow the node schema, without the top-level record wrapper fields. Both layouts remain AST v1.
+In both formats, `--flatten node` emits each node as a flat record. `--flatten file` emits one root record per file with its entire nested subtree. Its `children` recursively follow the node schema, without the top-level record wrapper fields. Both layouts use AST v2 and expose `start_column`.
 
 Formats:
 
@@ -140,9 +140,9 @@ NDJSON record types:
 
 Schema file:
 
-- `src/repogpt/schemas/ast-v1.schema.json`
+- `src/repogpt/schemas/ast-v2.schema.json`
 
-### 5.2 Code-units (`schema_version: "4"`)
+### 5.2 Code-units (`schema_version: "5"`)
 
 `code-units` is the retrieval-oriented projection.
 
@@ -174,6 +174,7 @@ Document-level fields with contract significance:
 - `start_line`
 - `end_line`
 - `content`
+- `content_ranges` on module documents
 - `content_hash`
 - `docstring_present`
 - `has_children`
@@ -181,19 +182,20 @@ Document-level fields with contract significance:
 Contract notes:
 
 - `external_id` is the semantic public identifier for a projected document
-- `content_hash` is `sha256(content)` for the exact emitted span
+- `content_hash` is `sha256(content)`; non-module content is an exact source span
 - `snapshot_id` is a repository-snapshot provenance marker derived from collected file hashes
 - `repo_key` defaults to `local-` plus the full SHA-256 of the OS-normalized canonical absolute path; an explicit validated key makes identity portable across clones
 - `scope` is `repogpt:{repo_key}`; language and test filters do not create additional scopes
 - `replace_scope` defaults to `false`; explicit replacement requires all languages, tests included, non-empty documents, no failures/early stop, and no eligible candidates omitted by size/binary guards
 - retrieval fields have one representation at the document top level; `metadata` contains only file digest, tags, parser attributes, and dependencies
-- if a file yields no selected symbol or container units for its language, the projector falls back to the root module document
+- every parsed file emits a root module. Its content concatenates lines outside all emitted non-module spans; inclusive `content_ranges` identifies the source intervals, and empty modules remain structural containers
+- `container_id` points to the nearest emitted ancestor; a module points to itself
 
 A single semantic traversal assigns qualified names and external IDs. Python sibling redeclarations append `~2`, `~3`, etc.; descendants inherit the disambiguated segment. Markdown duplicate heading slugs avoid reserved natural sibling slugs. Containers and ancestry use the same name map. Internal node IDs are checked before projection; duplicate external IDs reject emission. See [CHANGELOG.md](../CHANGELOG.md) for current identity rules.
 
 Schema file:
 
-- `src/repogpt/schemas/code-units-v4.schema.json`
+- `src/repogpt/schemas/code-units-v5.schema.json`
 
 The schema files are package resources included in wheels and source distributions, accessible through `importlib.resources.files("repogpt").joinpath("schemas")`. They are public contract validation helpers. They are validated against golden fixtures in tests and are not part of runtime artifact emission.
 
@@ -201,17 +203,17 @@ The schema files are package resources included in wheels and source distributio
 
 RepoGPT includes lightweight retrieval helpers over `code-units`. These are interoperability helpers, not a built-in production retrieval engine.
 
-### 6.1 `flat_rag_v1`
+### 6.1 `flat_rag_v2`
 
-- rank documents for a query
+- rank only positive-scoring documents for a query, excluding blank structural modules
 - return the top `k` seed items
 - perform no structural expansion
 
-### 6.2 `structured_rag_v1`
+### 6.2 `structured_rag_v2`
 
 - rank documents for a query
 - keep the same top `k` seed items
-- add at most one nearest enclosing container hop per seed when a projected container is available
+- add at most one nearest emitted enclosing container hop per seed when it has nonblank content
 - deduplicate by `external_id`
 
 ### 6.3 Benchmark scope
@@ -222,7 +224,7 @@ The benchmark path compares profile behavior on:
 - expansion count
 - rough token estimate
 
-The benchmark and MCP comparison share a loader that checks the v4 envelope and required retrieval fields and rejects duplicate identities or malformed entries. `top_k` must be a non-negative integer; zero returns an empty bundle.
+The benchmark and MCP comparison share a loader that checks the v5 envelope and required retrieval fields and rejects duplicate identities or malformed entries. `top_k` must be a non-negative integer; zero and unmatched queries return empty bundles.
 
 Comparison ranks once and shares the same seeds across both profiles. It does not claim end-to-end task quality, production relevance quality, or agentic performance.
 
@@ -236,7 +238,7 @@ Collection behavior is deterministic and currently includes:
 - canonical relative-path sort
 - built-in ignore directories/files
 - optional `.repogptignore`
-- silent pruning for ignored directories before descent; ignored directory contents are not expanded into skipped-file records
+- a skip record for each pruned directory; ignored directory contents are not enumerated
 - test exclusion by default
 - file-size guard
 - binary-file detection
@@ -252,9 +254,11 @@ For each collected file:
 4. record parse failures explicitly
 5. project the aggregate result to AST or `code-units`
 
-Python decoding uses `tokenize.detect_encoding` and strict decoding, retaining the raw byte digest even when decoding fails. Markdown retains UTF-8 replacement decoding. Source lines, spans, metrics, and comments share LF/CRLF/CR boundaries. Python traverses all statement branches while preserving declaration scopes and source order; imports retain their relative level. Markdown fences retain opening character and length, and same-line links include their start column in node identity.
+Python decoding uses `tokenize.detect_encoding` and strict decoding, retaining the raw byte digest even when decoding fails. Markdown uses UTF-8-sig replacement decoding. Source lines, spans, metrics, and comments share LF/CRLF/CR boundaries. Python traverses all statement branches while preserving declaration scopes and source order; imports retain their relative level. Markdown fences retain opening character and length, and nodes retain original character columns.
 
 Python comment extraction removes one delimiter `#`, preserving further hashes while trimming leading spaces and trailing whitespace. Tags remain parser-specific: Markdown module tags reflect TODO/FIXME in HTML comments; Python exposes comments without generating those tags. Markdown link filtering tracks indented code, paragraph continuations, and list indentation using four-column tab stops. List-contained fences retain original file spans, use the enclosing list indentation for closing fences, and end as unclosed when the container ends. Block starts inside lists reset paragraph continuation, so a following indented code block contributes no links. These boundaries follow the [CommonMark list-item and indented-code rules](https://spec.commonmark.org/0.31.2/#list-items); the parser remains a structural subset of Markdown. Indented blocks do not add new IR nodes or affect the fenced-code-block count.
+
+An evaluation of `markdown-it-py` 4.2.0 did not meet RepoGPT's exact source-column requirement: block tokens provide line ranges, while inline link tokens lack positions after list and blockquote prefixes are stripped. Reconstructing columns across lazy continuations, tabs, and CRLF would require duplicating the parser's internal source mapping. The maintained structural parser therefore remains the implementation for this contract.
 
 Preamble fenced-code identities use `@module`, which cannot be produced by heading slugification. Fences under a literal `# Root` heading therefore retain their IDs and ordinals when a preamble fence is added or removed. The previous preamble `root` namespace is not retained as an alias; consumers should regenerate observations as described in the changelog. JSON decoder `ValueError` failures, including oversized integer literals, are parse errors and leave the MCP session available for the next request.
 

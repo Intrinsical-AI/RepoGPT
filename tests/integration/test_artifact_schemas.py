@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from importlib.resources import files
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -27,12 +29,12 @@ def _validator(schema_name: str) -> Draft202012Validator:
 
 
 def test_ast_json_golden_matches_public_schema() -> None:
-    validator = _validator("ast-v1.schema.json")
+    validator = _validator("ast-v2.schema.json")
     validator.validate(_load_json(GOLDEN_ROOT / "cli_fixture_json.json"))
 
 
 def test_ast_ndjson_golden_records_match_public_schema() -> None:
-    validator = _validator("ast-v1.schema.json")
+    validator = _validator("ast-v2.schema.json")
     records = [
         json.loads(line)
         for line in (GOLDEN_ROOT / "cli_fixture_ndjson.ndjson")
@@ -46,8 +48,67 @@ def test_ast_ndjson_golden_records_match_public_schema() -> None:
 
 
 def test_code_units_json_golden_matches_public_schema() -> None:
-    validator = _validator("code-units-v4.schema.json")
+    validator = _validator("code-units-v5.schema.json")
     validator.validate(_load_json(GOLDEN_ROOT / "cli_fixture_code_units.json"))
+
+
+def test_code_units_v5_requires_module_only_content_ranges(tmp_path: Path) -> None:
+    (tmp_path / "sample.py").write_text("CONSTANT = 3\ndef f():\n    pass\n", encoding="utf-8")
+    _, projection = build_analyze_repo().run(
+        AnalysisRequest(repo_root=tmp_path, projection="code_units", repo_key="schema-test")
+    )
+    payload = projection.json_payload
+    validator = _validator("code-units-v5.schema.json")
+    validator.validate(payload)
+
+    without_ranges = json.loads(json.dumps(payload))
+    without_ranges["documents"][0].pop("content_ranges")
+    with pytest.raises(ValidationError):
+        validator.validate(without_ranges)
+
+    spurious_ranges = json.loads(json.dumps(payload))
+    spurious_ranges["documents"][1]["content_ranges"] = []
+    with pytest.raises(ValidationError):
+        validator.validate(spurious_ranges)
+
+
+@pytest.mark.parametrize("decorator", ["@\\\ndecorator\n", "@(\n    decorator\n)\n"])
+def test_cli_multiline_decorators_validate_and_stay_with_the_callable(
+    tmp_path: Path, decorator: str
+) -> None:
+    declaration = decorator + "async def f():\n    pass\n"
+    (tmp_path / "sample.py").write_text("VALUE = 1\n" + declaration, encoding="utf-8")
+    for projection, schema in [
+        ("ast", "ast-v2.schema.json"),
+        ("code-units", "code-units-v5.schema.json"),
+    ]:
+        process = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "repogpt.app.cli",
+                str(tmp_path),
+                "--emit",
+                projection,
+                "--stdout",
+            ]
+            + (["--repo-key", "decorator-test"] if projection == "code-units" else []),
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=True,
+        )
+        payload = json.loads(process.stdout)
+        _validator(schema).validate(payload)
+        assert payload["stats"]["failed_files"] == 0
+        if projection == "ast":
+            function = next(node for node in payload["records"] if node["type"] == "function")
+            assert (function["start_line"], function["start_column"]) == (2, 0)
+        else:
+            module, function = payload["documents"]
+            assert module["content"] == "VALUE = 1\n"
+            assert function["content"] == declaration
+            assert function["start_line"] == 2
 
 
 @pytest.mark.parametrize(
@@ -91,7 +152,7 @@ def test_fresh_semantic_regressions_match_public_schemas(
         )
     )
     assert result.stats.failed_files == 0
-    schema = "code-units-v4.schema.json" if projection == "code_units" else "ast-v1.schema.json"
+    schema = "code-units-v5.schema.json" if projection == "code_units" else "ast-v2.schema.json"
     validator = _validator(schema)
     if format == "ndjson":
         assert isinstance(artifact, AstProjection)
@@ -110,4 +171,4 @@ def test_ast_schema_rejects_malformed_nested_nodes(depth: int, child: object) ->
         node = node["children"][0]
     node["children"] = [child]
     with pytest.raises(ValidationError):
-        _validator("ast-v1.schema.json").validate(payload)
+        _validator("ast-v2.schema.json").validate(payload)

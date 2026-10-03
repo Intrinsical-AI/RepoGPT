@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.10.0 (unreleased)
+
+- AST v2 derives node IDs from source origin and exports character-based `start_column`; syntax errors use relative paths and portable formatting.
+- Code-units v5 emits a residual module for every parsed file with exact `content_ranges`, resolves every container to an emitted ancestor, and keeps empty modules as structural nodes. Retrieval profiles v2 ignore blank modules and zero-score matches.
+- Collection reports pruned directories and distinguishes language filtering. `env`, `build`, and `dist` are no longer global ignores; each repository can exclude them in `.repogptignore`.
+- Markdown parsing corrects ATX headings, links inside code and images, and TODO/comment detection. The external-parser experiment did not pass exact source-column mapping, so the existing parser remains.
+- The local `rag-prototype` integration moves to v5 in the same change. There is no v4 alias or automatic migration; regenerate local artifacts and reingest them.
+
 ## 0.9.0
 
 AST schema v1 and code-units schema v4 are retained. This version changes identity and replacement behavior.
