@@ -36,37 +36,23 @@ def _json_lines(stdout: str) -> list[dict[str, object]]:
     return [json.loads(line) for line in stdout.splitlines() if line.strip()]
 
 
-def _normalize_json_payload(payload: dict[str, object], repo_path: Path) -> dict[str, object]:
+def _normalize_json_payload(payload: dict[str, object]) -> dict[str, object]:
     normalized = cast(dict[str, object], json.loads(json.dumps(payload)))
     normalized["repo_root"] = "<REPO_ROOT>"
-    for failure in cast(list[dict[str, object]], normalized["failures"]):
-        failure["error"] = str(failure["error"]).replace(
-            repo_path.resolve().as_posix(),
-            "<REPO_ROOT>",
-        )
     return normalized
 
 
-def _normalize_code_units_payload(payload: dict[str, object], repo_path: Path) -> dict[str, object]:
+def _normalize_code_units_payload(payload: dict[str, object]) -> dict[str, object]:
     normalized = cast(dict[str, object], json.loads(json.dumps(payload)))
     normalized["snapshot_id"] = "<SNAPSHOT_ID>"
     for document in cast(list[dict[str, object]], normalized["documents"]):
         document["snapshot_id"] = "<SNAPSHOT_ID>"
-    for failure in cast(list[dict[str, object]], normalized["failures"]):
-        failure["error"] = str(failure["error"]).replace(
-            repo_path.resolve().as_posix(),
-            "<REPO_ROOT>",
-        )
     return normalized
 
 
-def _normalize_ndjson(records: list[dict[str, object]], repo_path: Path) -> list[dict[str, object]]:
+def _normalize_ndjson(records: list[dict[str, object]]) -> list[dict[str, object]]:
     normalized = cast(list[dict[str, object]], json.loads(json.dumps(records)))
     for record in normalized:
-        if record["record_type"] == "failure":
-            record["error"] = str(record["error"]).replace(
-                repo_path.resolve().as_posix(), "<REPO_ROOT>"
-            )
         if record["record_type"] == "summary":
             record["repo_root"] = "<REPO_ROOT>"
     return normalized
@@ -115,6 +101,8 @@ def test_cli_fail_fast_returns_exit_code_1() -> None:
     assert payload["stats"]["failed_files"] == 1
     assert payload["failures"][0]["path"] == "bad.py"
     assert "aborting — fail-fast" in proc.stderr
+    assert proc.stderr.count("aborting — fail-fast") == 1
+    assert "parse error" not in proc.stderr
 
 
 def test_cli_empty_languages_means_collect_nothing() -> None:
@@ -134,14 +122,14 @@ def test_cli_ndjson_stream_contains_nodes_failures_and_summary() -> None:
     assert "node" in record_types
     assert "failure" in record_types
     assert record_types[-1] == "summary"
-    assert all(record["schema_version"] == "1" for record in records)
+    assert all(record["schema_version"] == "2" for record in records)
 
 
 def test_cli_json_envelope_is_stable() -> None:
     proc = _run(["--stdout", "--format", "json", "--flatten", "node", "--include-tests"])
     assert proc.returncode == 2
     payload = json.loads(proc.stdout)
-    assert payload["schema_version"] == "1"
+    assert payload["schema_version"] == "2"
     assert payload["repo_root"] == DATA_ROOT.resolve().as_posix()
     assert set(payload.keys()) == {
         "schema_version",
@@ -160,7 +148,7 @@ def test_cli_json_matches_golden_fixture() -> None:
         CLI_FIXTURE,
     )
     assert proc.returncode == 2
-    payload = _normalize_json_payload(json.loads(proc.stdout), CLI_FIXTURE)
+    payload = _normalize_json_payload(json.loads(proc.stdout))
     expected = json.loads((GOLDEN_ROOT / "cli_fixture_json.json").read_text(encoding="utf-8"))
     assert payload == expected
 
@@ -180,8 +168,8 @@ def test_cli_code_units_matches_golden_fixture() -> None:
         CLI_FIXTURE,
     )
     assert proc.returncode == 2
-    payload = _normalize_code_units_payload(json.loads(proc.stdout), CLI_FIXTURE)
-    assert payload["schema_version"] == "4"
+    payload = _normalize_code_units_payload(json.loads(proc.stdout))
+    assert payload["schema_version"] == "5"
     expected = json.loads((GOLDEN_ROOT / "cli_fixture_code_units.json").read_text(encoding="utf-8"))
     assert payload == expected
 
@@ -195,7 +183,7 @@ def test_cli_code_units_documents_are_consumable_without_metadata() -> None:
     payload = json.loads(proc.stdout)
     document = payload["documents"][0]
 
-    assert payload["schema_version"] == "4"
+    assert payload["schema_version"] == "5"
     assert payload["replace_scope"] is False
     assert {
         "external_id",
@@ -215,6 +203,7 @@ def test_cli_code_units_documents_are_consumable_without_metadata() -> None:
         "start_line",
         "end_line",
         "content",
+        "content_ranges",
         "content_hash",
         "docstring_present",
         "has_children",
@@ -230,7 +219,7 @@ def test_cli_ndjson_matches_golden_fixture() -> None:
         CLI_FIXTURE,
     )
     assert proc.returncode == 2
-    records = _normalize_ndjson(_json_lines(proc.stdout), CLI_FIXTURE)
+    records = _normalize_ndjson(_json_lines(proc.stdout))
     expected = [
         json.loads(line)
         for line in (GOLDEN_ROOT / "cli_fixture_ndjson.ndjson")

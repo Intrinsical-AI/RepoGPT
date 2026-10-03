@@ -12,7 +12,7 @@ from repogpt.domain.analysis import (
     AnalysisResult,
 )
 from repogpt.runtime import build_analyze_repo
-from repogpt.utils.retrieval_profiles import assemble_structured_bundle
+from repogpt.utils.retrieval_profiles import compare_profiles
 from repogpt.utils.tree_utils import iter_nodes
 
 
@@ -56,6 +56,7 @@ def test_python_control_flow_preserves_symbols_imports_and_scopes(tmp_path: Path
     assert result.stats.failed_files == 0
     names = [doc["qualified_name"] for doc in payload["documents"]]
     assert names == [
+        "sample.py",
         "C",
         "C.first",
         "C.second",
@@ -98,6 +99,7 @@ def f(x): return x
     docs = payload["documents"]
     names = [doc["qualified_name"] for doc in docs]
     assert names == [
+        "sample.py",
         "Demo",
         "Demo.value",
         "Demo.value~2",
@@ -108,15 +110,26 @@ def f(x): return x
         "f~3",
     ]
     assert len({doc["external_id"] for doc in docs}) == len(docs)
-    bundle = assemble_structured_bundle(docs, query_text="value", top_k=len(docs))
-    assert len(bundle["items"]) == len(docs)
-    assert docs[4]["container_id"] == docs[3]["external_id"]
+    comparison = compare_profiles(docs, query_text="value", top_k=len(docs))
+    names_by_id = {doc["external_id"]: doc["qualified_name"] for doc in docs}
+    assert {
+        names_by_id[external_id] for external_id in comparison["structured_rag_v2"]["external_ids"]
+    } == {
+        "Demo",
+        "Demo.value",
+        "Demo.value~2",
+        "Demo~2",
+        "Demo~2.value",
+    }
+    by_name = {doc["qualified_name"]: doc for doc in docs}
+    assert by_name["Demo~2.value"]["container_id"] == by_name["Demo~2"]["external_id"]
 
 
 def test_markdown_slugs_reserve_natural_suffixes(tmp_path: Path) -> None:
     _, payload = _analyze(tmp_path, "sample.md", "# A\n# A\n## Child\n```py\nx\n```\n# A-2\n")
     docs = payload["documents"]
     assert [doc["qualified_name"] for doc in docs] == [
+        "sample.md",
         "a",
         "a-3",
         "a-3/child",
@@ -124,7 +137,8 @@ def test_markdown_slugs_reserve_natural_suffixes(tmp_path: Path) -> None:
         "a-2",
     ]
     assert len({doc["external_id"] for doc in docs}) == len(docs)
-    assert docs[3]["container_id"] == docs[2]["external_id"]
+    by_name = {doc["qualified_name"]: doc for doc in docs}
+    assert by_name["a-3/child/code_block[1]"]["container_id"] == by_name["a-3/child"]["external_id"]
 
 
 def test_markdown_preamble_and_root_heading_have_independent_code_identities(
@@ -150,9 +164,13 @@ def test_markdown_preamble_and_root_heading_have_independent_code_identities(
 def test_spans_use_python_physical_lines(tmp_path: Path, prefix: str, newline: str) -> None:
     expected = f"def f():{newline}    # inside{newline}    return 1{newline}"
     result, payload = _analyze(tmp_path, "sample.py", prefix + newline + expected)
-    doc = payload["documents"][0]
+    docs = payload["documents"]
+    module = next(doc for doc in docs if doc["unit_type"] == "module")
+    doc = next(doc for doc in docs if doc["unit_type"] == "function")
     assert (doc["start_line"], doc["end_line"], doc["content"]) == (2, 4, expected)
     assert doc["content_hash"] == hashlib.sha256(expected.encode("utf-8")).hexdigest()
+    assert module["content"] == prefix + newline
+    assert module["content_ranges"] == [{"start_line": 1, "end_line": 1}]
     root = result.parsed_files[0].root
     assert root is not None and root.end_line == 4
     function = root.children[0]
@@ -169,7 +187,7 @@ def test_spans_use_python_physical_lines(tmp_path: Path, prefix: str, newline: s
 def test_python_valid_encoding_is_preserved(tmp_path: Path, source: bytes) -> None:
     result, payload = _analyze(tmp_path, "sample.py", source)
     assert result.stats.failed_files == 0
-    doc = payload["documents"][0]
+    doc = next(doc for doc in payload["documents"] if doc["unit_type"] == "function")
     assert doc["content"] == 'def f():\n    return "café"\n'
     assert doc["metadata"]["file"]["sha256"] == hashlib.sha256(source).hexdigest()
 

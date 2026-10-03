@@ -29,7 +29,9 @@ class ArtifactWriter:
             try:
                 mode = stat.S_IMODE(output_path.stat().st_mode)
             except FileNotFoundError:
-                mode = None
+                current_umask = os.umask(0)
+                os.umask(current_umask)
+                mode = 0o666 & ~current_umask
             with tempfile.NamedTemporaryFile(
                 mode="w",
                 encoding="utf-8",
@@ -43,8 +45,7 @@ class ArtifactWriter:
                 for chunk in self._chunks(projection, format):
                     handle.write(chunk)
                 handle.flush()
-            if mode is not None:
-                temporary_path.chmod(mode)
+            temporary_path.chmod(mode)
             os.replace(temporary_path, output_path)
         except OSError as exc:
             raise OSError(

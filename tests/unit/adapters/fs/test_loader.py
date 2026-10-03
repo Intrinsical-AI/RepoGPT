@@ -20,3 +20,17 @@ def test_loader_decodes_text_and_hashes_original_bytes(tmp_path: Path) -> None:
     assert loaded.text == content
     assert loaded.digest.size == len(raw)
     assert loaded.digest.sha256 == hashlib.sha256(raw).hexdigest()
+
+
+def test_loader_strips_markdown_utf8_bom_without_changing_digest(tmp_path: Path) -> None:
+    raw = b"\xef\xbb\xbf# Title\n"
+    path = tmp_path / "bom.md"
+    path.write_bytes(raw)
+
+    loaded = DefaultLoader().load(
+        CollectedFile(abs_path=path, relative_path="bom.md", language="md")
+    )
+
+    assert loaded.text == "# Title\n"
+    assert loaded.digest.size == len(raw)
+    assert loaded.digest.sha256 == hashlib.sha256(raw).hexdigest()

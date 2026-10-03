@@ -14,6 +14,7 @@ class CodeNode:
     language: str | None = None
     path: str | None = None
     start_line: int | None = None
+    start_column: int | None = None
     end_line: int | None = None
     docstring: str | None = None
     comments: list[dict[str, Any]] = field(default_factory=list)

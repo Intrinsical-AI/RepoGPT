@@ -6,10 +6,8 @@ from pathlib import Path
 
 import structlog
 
-from repogpt.adapters.parsers.registry import StaticParserRegistry
 from repogpt.adapters.writers.artifact_writer import ArtifactWriter
 from repogpt.application.exit_codes import exit_code_for_result
-from repogpt.application.export_policy import validate_request
 from repogpt.application.languages import UnsupportedLanguagesError, parse_cli_languages
 from repogpt.domain.analysis import AnalysisRequest
 from repogpt.domain.errors import (
@@ -60,12 +58,12 @@ def main() -> int:
 
     configure_logging(args.log_level)
     log = structlog.get_logger()
-    registry = StaticParserRegistry()
+    analyzer = build_analyze_repo()
 
     try:
         langs = parse_cli_languages(
             args.languages,
-            supported_extensions=registry.supported_extensions(),
+            supported_extensions=analyzer.parser_registry.supported_extensions(),
         )
     except UnsupportedLanguagesError as exc:
         parser.error(exc.message)
@@ -86,28 +84,18 @@ def main() -> int:
     )
 
     try:
-        validate_request(request, registry.supported_extensions())
-    except InvalidRequestError as exc:
-        parser.error(str(exc))
-
-    log.info("starting run", repo=str(request.repo_root), format=request.format)
-
-    try:
-        result, projection = build_analyze_repo().run(request)
+        result, projection = analyzer.run(request)
         ArtifactWriter().write(projection, output_path, format=request.format)
-        if result.stopped_early and result.stats.failed_files > 0:
-            first_failure = next(
-                parsed_file.failure.message
-                for parsed_file in result.parsed_files
-                if parsed_file.failure is not None
-            )
-            log.error("aborting — fail-fast", first_error=first_failure)
         for parsed_file in result.parsed_files:
             if parsed_file.failure is not None:
                 log.error(
-                    "parse error", path=parsed_file.relative_path, error=parsed_file.failure.message
+                    "aborting — fail-fast" if result.stopped_early else "parse error",
+                    path=parsed_file.relative_path,
+                    error=parsed_file.failure.message,
                 )
         return exit_code_for_result(result)
+    except InvalidRequestError as exc:
+        parser.error(str(exc))
     except InvalidRepoError as exc:
         log.error("invalid repository path", error=str(exc))
         return 3

@@ -106,7 +106,7 @@ def test_stdio_initialization_notifications_and_recovery(tmp_path: Path) -> None
     assert responses[1]["error"]["code"] == -32700
     assert responses[2]["result"]["isError"] is False
     payload = json.loads(responses[2]["result"]["content"][0]["text"])
-    assert len(payload["documents"]) == 1
+    assert [doc["unit_type"] for doc in payload["documents"]] == ["module", "function"]
 
 
 def test_stdio_recovers_after_oversized_numeric_json_id() -> None:

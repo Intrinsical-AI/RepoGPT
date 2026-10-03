@@ -48,6 +48,23 @@ def test_analyze_repo_partial_failure_returns_two(tmp_path: Path) -> None:
     assert payload["failures"][0]["record_type"] == "failure"
 
 
+def test_parse_error_is_portable_and_has_single_line_breaks(tmp_path: Path) -> None:
+    messages = []
+    for dirname in ("first", "second"):
+        repo = tmp_path / dirname
+        repo.mkdir()
+        (repo / "bad.py").write_text("def broken(:\n", encoding="utf-8")
+        result, _ = build_analyze_repo().run(AnalysisRequest(repo_root=repo))
+        failure = result.parsed_files[0].failure
+        assert failure is not None
+        messages.append(failure.message)
+
+    assert messages[0] == messages[1]
+    assert 'File "bad.py", line 1\n    def broken(:' in messages[0]
+    assert "\n\n" not in messages[0]
+    assert str(tmp_path) not in messages[0]
+
+
 def test_analyze_repo_fail_fast_returns_partial_projection_and_status_one(tmp_path: Path) -> None:
     (tmp_path / "bad.py").write_text("def broken(:\n", encoding="utf-8")
     (tmp_path / "later.py").write_text("x=1\n", encoding="utf-8")

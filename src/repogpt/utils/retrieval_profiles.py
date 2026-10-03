@@ -10,7 +10,11 @@ def validate_top_k(top_k: int) -> None:
 
 
 def _tokenize(text: str) -> set[str]:
-    return {token for token in re.findall(r"[a-z0-9_]+", text.lower()) if token}
+    return set(re.findall(r"[a-z0-9_]+", text.lower()))
+
+
+def _retrievable(document: dict[str, Any]) -> bool:
+    return document.get("unit_type") != "module" or bool(str(document.get("content", "")).strip())
 
 
 def _document_search_text(document: dict[str, Any]) -> str:
@@ -33,18 +37,30 @@ def _estimate_tokens(documents: list[dict[str, Any]]) -> int:
 
 def rank_documents(documents: list[dict[str, Any]], query_text: str) -> list[dict[str, Any]]:
     query_tokens = _tokenize(query_text)
+    query_symbol = query_text.strip().lower()
 
-    def score(document: dict[str, Any]) -> tuple[int, int, str]:
+    def score(document: dict[str, Any]) -> int:
         search_tokens = _tokenize(_document_search_text(document))
         overlap = len(query_tokens & search_tokens)
-        exact_symbol_match = int(str(document.get("symbol", "")).lower() == query_text.lower())
-        return (
-            overlap + exact_symbol_match * 2,
-            len(str(document.get("qualified_name", ""))),
-            str(document.get("external_id", "")),
+        symbol = document.get("symbol")
+        exact_symbol_match = bool(
+            query_symbol and isinstance(symbol, str) and symbol.lower() == query_symbol
         )
+        return overlap + exact_symbol_match * 2
 
-    return sorted(documents, key=score, reverse=True)
+    scored = [(score(document), document) for document in documents if _retrievable(document)]
+    return [
+        document
+        for rank, document in sorted(
+            scored,
+            key=lambda item: (
+                -item[0],
+                len(str(item[1].get("qualified_name", ""))),
+                str(item[1].get("external_id", "")),
+            ),
+        )
+        if rank > 0
+    ]
 
 
 def assemble_flat_bundle(
@@ -57,24 +73,13 @@ def assemble_flat_bundle(
     ranked = rank_documents(documents, query_text)
     items = ranked[:top_k]
     return {
-        "profile": "flat_rag_v1",
+        "profile": "flat_rag_v2",
         "query_text": query_text,
         "seed_count": len(items),
         "expanded_count": 0,
         "estimated_tokens": _estimate_tokens(items),
         "items": items,
     }
-
-
-def assemble_structured_bundle(
-    documents: list[dict[str, Any]],
-    *,
-    query_text: str,
-    top_k: int = 3,
-) -> dict[str, Any]:
-    validate_top_k(top_k)
-    seeds = rank_documents(documents, query_text)[:top_k]
-    return _expand_bundle(documents, seeds, query_text=query_text)
 
 
 def _expand_bundle(
@@ -98,7 +103,7 @@ def _expand_bundle(
             items.append(seed)
         container_id = str(seed.get("container_id", ""))
         container = by_external_id.get(container_id)
-        if container is None:
+        if container is None or not _retrievable(container):
             continue
         if container_id in seen:
             continue
@@ -106,7 +111,7 @@ def _expand_bundle(
         items.append(container)
 
     return {
-        "profile": "structured_rag_v1",
+        "profile": "structured_rag_v2",
         "query_text": query_text,
         "seed_count": len(seeds),
         "expanded_count": max(0, len(items) - len(seeds)),

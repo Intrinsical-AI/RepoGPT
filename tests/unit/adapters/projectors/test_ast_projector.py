@@ -40,7 +40,7 @@ def test_ast_projector_json_envelope() -> None:
 
     projection = AstProjector().project(result, AnalysisRequest(repo_root=Path.cwd()))
 
-    assert projection.json_payload["schema_version"] == "1"
+    assert projection.json_payload["schema_version"] == "2"
     assert projection.json_payload["failures"] == []
     assert projection.json_payload["records"][0]["record_type"] == "node"
 

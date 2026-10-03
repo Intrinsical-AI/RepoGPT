@@ -114,6 +114,29 @@ def test_mcp_initialize_and_list_tools() -> None:
     } <= names
 
 
+def test_mcp_ping_returns_empty_result() -> None:
+    response = handle_request({"jsonrpc": "2.0", "id": "health", "method": "ping"})
+    assert response == {"jsonrpc": "2.0", "id": "health", "result": {}}
+
+
+def test_mcp_text_artifact_is_compact_utf8_json(tmp_path: Path) -> None:
+    (tmp_path / "café.py").write_text("def café():\n    return 1\n", encoding="utf-8")
+    response = handle_request(
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "repogpt_emit_ast",
+                "arguments": {"repo_path": str(tmp_path)},
+            },
+        }
+    )
+    text = response["result"]["content"][0]["text"]
+    assert "café" in text
+    assert text == json.dumps(json.loads(text), ensure_ascii=False, separators=(",", ":"))
+
+
 def test_mcp_emit_code_units_matches_cli_output() -> None:
     cli_run = _run(
         ["--stdout", "--format", "json", "--emit", "code-units", "--include-tests"], CLI_FIXTURE
@@ -283,8 +306,8 @@ def test_mcp_compare_profiles_uses_code_units_artifact(tmp_path: Path) -> None:
     comparison = _extract_content_text(response)
     assert response["result"]["isError"] is False
     assert comparison["query_text"] == "helper"
-    assert "flat_rag_v1" in comparison
-    assert "structured_rag_v1" in comparison
+    assert "flat_rag_v2" in comparison
+    assert "structured_rag_v2" in comparison
     assert _read_json(artifact_path)["kind"] == "code-units"
 
 
@@ -331,7 +354,7 @@ def test_mcp_end_to_end_mixed_repo_matches_cli_across_flags(tmp_path: Path) -> N
         assert cli_ast.returncode == 0
         cli_records = _json_lines(cli_ast.stdout)
         assert cli_records[-1]["record_type"] == "summary"
-        assert cli_records[-1]["schema_version"] == "1"
+        assert cli_records[-1]["schema_version"] == "2"
 
         response_ast = handle_request(
             {
@@ -353,7 +376,7 @@ def test_mcp_end_to_end_mixed_repo_matches_cli_across_flags(tmp_path: Path) -> N
         assert response_ast["result"]["isError"] is False
         assert mcp_ast == cli_records
         assert mcp_ast[-1]["record_type"] == "summary"
-        assert mcp_ast[-1]["schema_version"] == "1"
+        assert mcp_ast[-1]["schema_version"] == "2"
 
     artifact = _run(
         ["--stdout", "--format", "json", "--emit", "code-units", "--include-tests"],
@@ -384,5 +407,5 @@ def test_mcp_end_to_end_mixed_repo_matches_cli_across_flags(tmp_path: Path) -> N
     comparison = _extract_content_text(compare)
     assert compare["result"]["isError"] is False
     assert comparison["query_text"] == "helper"
-    assert "flat_rag_v1" in comparison
-    assert "structured_rag_v1" in comparison
+    assert "flat_rag_v2" in comparison
+    assert "structured_rag_v2" in comparison

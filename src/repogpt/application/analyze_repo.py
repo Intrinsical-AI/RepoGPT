@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import traceback
+from dataclasses import replace
 
 from repogpt.application.export_policy import validate_replacement, validate_request
 from repogpt.domain.analysis import (
@@ -45,13 +46,9 @@ class AnalyzeRepo:
             raise InvalidRepoError(f"Repository path '{repo_root}' does not exist")
         if not repo_root.is_dir():
             raise InvalidRepoError(f"Repository path '{repo_root}' is not a directory")
+        request = replace(request, repo_root=repo_root)
 
-        if request.supported_languages is not None:
-            enabled_extensions = set(request.supported_languages)
-        else:
-            enabled_extensions = set(supported_extensions)
-
-        collected_files, skipped_files = self.collector.collect(request, enabled_extensions)
+        collected_files, skipped_files = self.collector.collect(request, supported_extensions)
         parsed_files: list[ParsedFile] = []
         stopped_early = False
 
@@ -116,4 +113,4 @@ class AnalyzeRepo:
         return result, projection
 
     def _format_failure(self, exc: Exception) -> str:
-        return "\n".join(traceback.format_exception_only(type(exc), exc)).strip()
+        return "".join(traceback.format_exception_only(type(exc), exc)).strip()

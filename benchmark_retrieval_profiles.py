@@ -16,7 +16,7 @@ def _non_negative_int(value: str) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Compare flat_rag_v1 and structured_rag_v1 on a code-units artifact.",
+        description="Compare flat_rag_v2 and structured_rag_v2 on a code-units artifact.",
     )
     parser.add_argument("artifact", help="Path to a code-units JSON artifact")
     parser.add_argument("query", help="Query text to evaluate")

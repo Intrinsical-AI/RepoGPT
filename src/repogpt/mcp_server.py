@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import json
-import logging
 import sys
 from pathlib import Path
 from typing import Any, Literal, cast
 
+import structlog
+
 from repogpt import __version__
-from repogpt.adapters.parsers.registry import StaticParserRegistry
 from repogpt.application.export_policy import REPO_KEY_PATTERN
 from repogpt.application.languages import UnsupportedLanguagesError, normalize_language_filter
 from repogpt.domain.analysis import AnalysisRequest, AstProjection
@@ -20,7 +20,19 @@ from repogpt.stdio import silence_failed_stdout
 from repogpt.utils.retrieval_artifact import load_documents
 from repogpt.utils.retrieval_profiles import compare_profiles
 
-logger = logging.getLogger("repogpt_mcp")
+logger = structlog.get_logger(__name__)
+
+
+def _text_result(payload: Any, *, is_error: bool) -> dict[str, Any]:
+    return {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            }
+        ],
+        "isError": is_error,
+    }
 
 
 def _run_repogpt_analysis(
@@ -35,13 +47,13 @@ def _run_repogpt_analysis(
     flatten: Literal["node", "file"] = "node",
     fmt: Literal["json", "ndjson"] = "json",
 ) -> dict[str, Any]:
-    registry = StaticParserRegistry()
+    analyzer = build_analyze_repo()
     request = AnalysisRequest(
         repo_root=Path(repo_path),
         include_tests=include_tests,
         supported_languages=normalize_language_filter(
             languages,
-            supported_extensions=registry.supported_extensions(),
+            supported_extensions=analyzer.parser_registry.supported_extensions(),
         ),
         projection="code_units" if emit == "code-units" else "ast",
         format=fmt,
@@ -50,16 +62,13 @@ def _run_repogpt_analysis(
         repo_key=repo_key,
         replace_scope=replace_scope,
     )
-    result, projection = build_analyze_repo().run(request)
+    result, projection = analyzer.run(request)
     if fmt == "json":
         artifact: dict[str, Any] | list[dict[str, Any]] = projection.json_payload
     else:
         artifact = cast(AstProjection, projection).ndjson_records
 
-    return {
-        "content": [{"type": "text", "text": json.dumps(artifact, indent=2)}],
-        "isError": result.stats.failed_files > 0,
-    }
+    return _text_result(artifact, is_error=result.stats.failed_files > 0)
 
 
 def tool_emit_code_units(
@@ -102,17 +111,12 @@ def tool_emit_ast(
 
 def tool_compare_profiles(artifact_path: str, query: str) -> dict[str, Any]:
     documents = load_documents(Path(artifact_path))
-    return {
-        "content": [
-            {"type": "text", "text": json.dumps(compare_profiles(documents, query_text=query))}
-        ],
-        "isError": False,
-    }
+    return _text_result(compare_profiles(documents, query_text=query), is_error=False)
 
 
 TOOLS: dict[str, dict[str, Any]] = {
     "repogpt_emit_code_units": {
-        "description": "Emit RepoGPT code-units v4 as a JSON artifact.",
+        "description": "Emit RepoGPT code-units v5 as a JSON artifact.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -217,6 +221,8 @@ def handle_request(request: object) -> dict[str, Any] | None:
             "serverInfo": {"name": "repogpt", "version": __version__},
             "capabilities": {"tools": {}},
         }
+    elif method == "ping":
+        result = {}
     elif method == "tools/list":
         result = {
             "tools": [
@@ -242,7 +248,7 @@ def handle_request(request: object) -> dict[str, Any] | None:
             return _error(req_id, -32602, str(exc))
         except Exception as exc:
             # A tool failure must not kill the stdio session.
-            logger.error("Tool error in %s: %s", tool_name, exc)
+            logger.error("tool error", tool=tool_name, error=str(exc))
             result = {"content": [{"type": "text", "text": str(exc)}], "isError": True}
     else:
         return _error(req_id, -32601, f"Unknown method: {method}")
@@ -264,13 +270,13 @@ def main() -> int:
             else:
                 response = handle_request(request)
             if response is not None:
-                print(json.dumps(response), flush=True)
+                print(json.dumps(response, ensure_ascii=False, separators=(",", ":")), flush=True)
     except BrokenPipeError:
         silence_failed_stdout()
         return 0
     except OSError as exc:
         silence_failed_stdout()
-        logger.error("stdio I/O error: %s", exc)
+        logger.error("stdio I/O error", error=str(exc))
         return 3
     return 0
 

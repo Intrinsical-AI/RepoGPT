@@ -38,12 +38,23 @@ class AnalysisResult:
 
 @dataclass(frozen=True)
 class AstProjection:
-    schema_version: str
     json_payload: dict[str, Any]
-    ndjson_records: list[dict[str, Any]]
+
+    @property
+    def ndjson_records(self) -> list[dict[str, Any]]:
+        payload = self.json_payload
+        return [
+            *payload["records"],
+            *payload["failures"],
+            {
+                "record_type": "summary",
+                "schema_version": payload["schema_version"],
+                "repo_root": payload["repo_root"],
+                "stats": payload["stats"],
+            },
+        ]
 
 
 @dataclass(frozen=True)
 class CodeUnitsProjection:
-    schema_version: str
     json_payload: dict[str, Any]

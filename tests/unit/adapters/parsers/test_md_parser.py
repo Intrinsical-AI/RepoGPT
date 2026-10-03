@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from repogpt.adapters.fs.loader import DefaultLoader
 from repogpt.adapters.parsers.md_parser import MarkdownParser
 from repogpt.domain.files import CollectedFile, FileDigest, LoadedFile
 from repogpt.domain.nodes import CodeNode
@@ -25,6 +26,17 @@ def _loaded_file(filename: str) -> LoadedFile:
 
 def _parse(filename: str) -> CodeNode:
     return MarkdownParser().parse(_loaded_file(filename))
+
+
+def _parse_text(tmp_path: Path, content: str) -> CodeNode:
+    raw = content.encode("utf-8")
+    return MarkdownParser().parse(
+        LoadedFile(
+            collected_file=CollectedFile(tmp_path / "sample.md", "sample.md", "md"),
+            text=content,
+            digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
+        )
+    )
 
 
 def test_basic_markdown_builds_heading_tree() -> None:
@@ -69,6 +81,85 @@ def test_markdown_ids_are_deterministic() -> None:
     first = flatten_tree(_parse("with_comments.md"))
     second = flatten_tree(_parse("with_comments.md"))
     assert [node["id"] for node in first] == [node["id"] for node in second]
+
+
+def test_bom_first_heading_is_emitted_after_loading(tmp_path: Path) -> None:
+    path = tmp_path / "bom.md"
+    path.write_bytes(b"\xef\xbb\xbf# First\n")
+    loaded = DefaultLoader().load(CollectedFile(path, "bom.md", "md"))
+    root = MarkdownParser().parse(loaded)
+    assert [(node.name, node.start_column) for node in root.children] == [("First", 0)]
+
+
+@pytest.mark.parametrize(
+    "source,title,column",
+    [
+        ("   # Indented\n", "Indented", 3),
+        ("- # InList\n", "InList", 2),
+        ("- \t# WithTab\n", "WithTab", 3),
+        ("#\n", "", 0),
+        ("## Closed ##\n", "Closed", 0),
+    ],
+)
+def test_commonmark_atx_headings_use_original_columns(
+    tmp_path: Path, source: str, title: str, column: int
+) -> None:
+    root = _parse_text(tmp_path, source)
+    headings = [node for node in flatten_tree(root) if node["type"] == "heading"]
+    assert [(node["name"], node["start_column"]) for node in headings] == [(title, column)]
+
+
+def test_links_ignore_inline_code_and_images_but_keep_escaped_image_marker(
+    tmp_path: Path,
+) -> None:
+    source = r"`[code](wrong)` ![image](img.png) [real](dest) \![escaped](url)" + "\n"
+    root = _parse_text(tmp_path, source)
+    links = [node for node in flatten_tree(root) if node["type"] == "link"]
+    assert [(node["name"], node["attributes"]["url"]) for node in links] == [
+        ("real", "dest"),
+        ("escaped", "url"),
+    ]
+    assert [node["start_column"] for node in links] == [
+        source.index("[real]"),
+        source.index("[escaped]"),
+    ]
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("`\n[hidden](wrong)\n` [visible](right)\n", ["visible"]),
+        ("``\n[hidden](wrong)\n` not a closer\n`` [visible](right)\n", ["visible"]),
+        ("` unclosed\n[visible](right)\n\n` separate paragraph\n", ["visible"]),
+        ("` unclosed\n```text\n[hidden](code)\n```\n[visible](right)\n", ["visible"]),
+        ("- ` unclosed\n- [visible](right) `\n", ["visible"]),
+    ],
+)
+def test_multiline_inline_code_spans_preserve_link_boundaries(
+    tmp_path: Path, source: str, expected: list[str]
+) -> None:
+    root = _parse_text(tmp_path, source)
+    links = [node for node in flatten_tree(root) if node["type"] == "link"]
+    assert [node["name"] for node in links] == expected
+    for node in links:
+        original_line = source.splitlines()[node["start_line"] - 1]
+        assert original_line[node["start_column"]] == "["
+
+
+def test_markdown_comments_and_tags_ignore_fenced_code_and_substrings(tmp_path: Path) -> None:
+    source = "<!-- mastodon -->\n```html\n<!-- TODO: fake -->\n```\n<!-- FIXME: real -->\n"
+    root = _parse_text(tmp_path, source)
+    assert root.comments == [
+        {"text": "mastodon", "line": 1},
+        {"text": "FIXME: real", "line": 5},
+    ]
+    assert root.tags == ["FIXME"]
+
+
+def test_markdown_comments_inside_multiline_inline_code_are_ignored(tmp_path: Path) -> None:
+    root = _parse_text(tmp_path, "`\n<!-- TODO: code -->\n`\n<!-- FIXME: prose -->\n")
+    assert root.comments == [{"text": "FIXME: prose", "line": 4}]
+    assert root.tags == ["FIXME"]
 
 
 def test_markdown_unclosed_code_block_extends_to_eof(tmp_path: Path) -> None:

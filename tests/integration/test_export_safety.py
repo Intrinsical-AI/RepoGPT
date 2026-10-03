@@ -178,7 +178,15 @@ def test_atomic_writer_preserves_artifact_and_cleans_temp_on_failure(
 ) -> None:
     output = tmp_path / "out.json"
     output.write_bytes(b"previous")
-    projection = AstProjection("1", {"records": []}, [{"ok": True}, {"bad": object()}])
+    projection = AstProjection(
+        {
+            "schema_version": "2",
+            "repo_root": ".",
+            "stats": {},
+            "failures": [],
+            "records": [{"ok": True}, {"bad": object()}] if format == "ndjson" else [],
+        }
+    )
     if format == "json":
         with (
             patch(
@@ -199,7 +207,7 @@ def test_atomic_writer_keeps_existing_permissions(tmp_path: Path) -> None:
     output.write_bytes(b"previous")
     output.chmod(0o640)
     ArtifactWriter().write(
-        CodeUnitsProjection("4", {"documents": []}),
+        CodeUnitsProjection({"documents": []}),
         output,
     )
     assert stat.S_IMODE(output.stat().st_mode) == 0o640
@@ -215,7 +223,7 @@ def test_residual_identity_collision_aborts_before_writing(tmp_path: Path, kind:
     output.write_bytes(b"previous")
     if kind == "internal":
         with (
-            patch("repogpt.adapters.parsers.py_parser.stable_node_id", return_value="same"),
+            patch("repogpt.utils.node_utils.stable_node_id", return_value="same"),
             pytest.raises(ValueError, match="Duplicate AST"),
         ):
             _export(root, output)
