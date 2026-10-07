@@ -22,6 +22,16 @@ def test_loader_decodes_text_and_hashes_original_bytes(tmp_path: Path) -> None:
     assert loaded.digest.sha256 == hashlib.sha256(raw).hexdigest()
 
 
+def test_loader_rejects_invalid_markdown_utf8_without_replacement(tmp_path: Path) -> None:
+    path = tmp_path / "invalid.md"
+    path.write_bytes(b"# bad\xff\n")
+    loaded = DefaultLoader().load(
+        CollectedFile(abs_path=path, relative_path="invalid.md", language="md")
+    )
+    assert loaded.decode_error is not None
+    assert loaded.text == ""
+
+
 def test_loader_strips_markdown_utf8_bom_without_changing_digest(tmp_path: Path) -> None:
     raw = b"\xef\xbb\xbf# Title\n"
     path = tmp_path / "bom.md"
