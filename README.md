@@ -207,6 +207,13 @@ Repository identity and replacement:
 - Automatic `repo_key` is `local-` plus the full SHA-256 of the OS-normalized, resolved absolute repository path. Symlink aliases resolve to the same identity; independent clones and moved repositories get different identities.
 - Use the same explicit `--repo-key` across clones to share an identity. Keys are validated without normalization. Scope is always `repogpt:{repo_key}`.
 - `replace_scope` defaults to `false`, including empty and partial exports. `--replace-scope` requires `--include-tests` and all supported languages, a non-empty document list, no parse/decode failures, no early stop, and no eligible files omitted by size or binary guards. Known ignore rules and symlink exclusions delimit the collection universe.
+
+Markdown decoding uses strict UTF-8 with an optional BOM. Invalid bytes produce
+a decode failure and prevent scope replacement rather than silently changing
+the source text. The RAG v5 consumer separately limits nonblank imported units
+to 20,000 characters, external IDs to 512 characters, source IDs to 1,024
+characters, and snapshots to 5,000 nonblank documents. A valid RepoGPT artifact
+can exceed those consumer limits and be refused before import.
 - Repeated Python declarations receive `~2`, `~3`, etc. in their qualified names and IDs, including descendants of repeated containers. `symbol` retains the source name.
 - Markdown headings reserve natural sibling slugs: `A`, `A`, `A-2` becomes `a`, `a-3`, `a-2`. Qualified names, IDs, containers, and ancestry use the same assignment. Residual internal or external ID collisions abort emission.
 - Preamble code fences use the reserved `@module` section, independently of a literal `# Root` heading. This changes their previous `root` IDs; see the regeneration guidance in [CHANGELOG.md](CHANGELOG.md).
