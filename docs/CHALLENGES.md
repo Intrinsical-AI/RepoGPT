@@ -4,7 +4,7 @@ This document captures open questions and tradeoffs. It is not a committed roadm
 
 ## 1. Projection surface area
 
-RepoGPT currently ships AST export and `code-units`. An open question is how much additional projection flexibility should become part of the supported public surface.
+The current source exposes AST v3 and code-units v6 with fully closed schemas. An open question is how much additional projection flexibility should become part of the supported public surface without weakening those fixed parser-specific attribute and metric contracts.
 
 Options under consideration:
 
@@ -41,13 +41,14 @@ Open questions:
 
 ## 4. Retrieval semantics beyond the current baseline
 
-The current retrieval helpers are intentionally small and contract-focused. They are useful for comparison but do not yet answer broader questions about retrieval quality or context assembly policy.
+The current public flat and structured helpers preserve raw retrieval items and assemble model context by merging physical source lines within matching provenance groups. Profiles v3 estimate tokens from the rendered context, including headers and separators. This gives callers an explicit context contract without deciding broader retrieval-quality or prompt-budget policies.
 
 Open questions:
 
 - what additional structure is worth exposing without turning public artifacts into graph snapshots
 - how to evaluate retrieval behavior beyond overlap and simple expansion counts
-- when bundle-level policies should become explicit public contract instead of benchmark-only behavior
+- which budgeting, truncation, and ordering policies should extend the public context helpers
+- how callers should integrate canonical context with downstream prompt builders and tokenizer-specific budgets
 
 ## 5. Extension boundaries
 

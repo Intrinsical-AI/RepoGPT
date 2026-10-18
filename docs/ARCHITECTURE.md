@@ -20,7 +20,7 @@ Collector -> Loader -> Parser registry -> Projector
                                          |
                                 (result, projection)
                                   /             \
-                            CLI writer       MCP result
+                            CLI writer    MCP result/file
 ```
 
 Concrete runtime wiring lives in `src/repogpt/runtime.py` and currently composes:
@@ -31,7 +31,7 @@ Concrete runtime wiring lives in `src/repogpt/runtime.py` and currently composes
 - `AstProjector`
 - `CodeUnitsProjector`
 
-`AnalyzeRepo.run(request)` returns `(AnalysisResult, projection)` after request and replacement validation. Output destinations belong to the CLI, which calls `ArtifactWriter` explicitly. MCP consumes the returned projection directly. The application has no writer dependency or output target.
+`AnalyzeRepo.run(request)` returns `(AnalysisResult, projection)` after request and replacement validation. Output destinations belong to the interfaces: CLI calls `ArtifactWriter` explicitly; MCP returns native objects inline or calls the same writer for file mode. The application has no writer dependency or output target.
 
 ## 2. Architecture intent
 
@@ -70,7 +70,7 @@ Entry point:
 Transport:
 
 - line-delimited JSON-RPC over stdio
-- initialization returns protocol version `2024-11-05` and package-derived server metadata
+- initialization returns the sole supported protocol version `2025-06-18` and package-derived server metadata; clients requesting another version receive this supported alternative
 
 Built-in tools:
 
@@ -78,9 +78,13 @@ Built-in tools:
 - `repogpt_emit_ast`
 - `repogpt_compare_profiles`
 
-The MCP server reuses the same analysis runtime and language-filter validation semantics as the CLI. It does not introduce a separate artifact contract. Tool results contain `content` and `isError`. Successful JSON text contains the artifact or comparison directly; AST NDJSON uses an array of records. Tool execution failures contain JSON text `{"error":"message"}` and set `isError: true`. Partial/fail-fast results retain their artifact payload with `isError: true`, so file errors remain inspectable.
+The MCP server reuses the analysis runtime and extension-filter policies used by the CLI. Tool results contain `structuredContent`, identical compact JSON in `content[0].text`, and `isError`. JSON artifacts are returned as native objects. Inline AST NDJSON uses `{"schema_version":"3","format":"ndjson","records":[...]}` because structured content must be an object. Execution failures use `{"error":"message"}` with `isError: true`. Partial/fail-fast results retain their inline artifact or file receipt with `isError: true`.
 
-Both entry points configure structlog output on STDERR. Importing the MCP module does not configure logging. Valid notifications receive no responses and do not dispatch tools; invalid envelopes are rejected before notification handling, including envelopes without an ID. Wire validation checks required/unknown fields, booleans, language arrays, and enums without coercion. Handlers apply shared semantic policies such as the repository-key pattern before collection. Error codes distinguish malformed JSON (`-32700`), envelopes (`-32600`), unknown methods (`-32601`), arguments (`-32602`). Failed analysis and refused replacement use MCP tool results with `isError: true`. The advertised MCP 2024-11-05 protocol answers `ping` with `{}`.
+Both emit tools accept optional `output_path`. File mode writes the original projection through `ArtifactWriter` and returns exactly `output_path`, `format`, `schema_version`, `size_bytes`, `sha256`, and `stats`. JSON/NDJSON bytes match the CLI writer; NDJSON files contain actual record lines rather than the MCP wrapper. The absolute receipt path resolves the parent directory without following the leaf. Existing regular files are atomically replaced with permissions retained; missing parent directories are not created. Standard-I/O aliases, symlink/non-regular leaves, blank paths, and existing supported source files inside the repository are rejected. The source guard runs before analysis, covering filters and fail-fast stops.
+
+Tool discovery publishes strict output-schema unions using the packaged artifact definitions, receipt variants, and execution-error objects. Partial artifacts satisfy the artifact branch. Emit tools advertise `readOnlyHint: false` and `destructiveHint: true`; comparison advertises `readOnlyHint: true`. `repogpt_compare_profiles` accepts `top_k` (integer, minimum zero, default three) and rejects invalid values before reading its artifact input.
+
+Both entry points configure structlog output on STDERR. Importing the MCP module does not configure logging. Valid notifications receive no responses and do not dispatch tools; invalid envelopes are rejected before notification handling, including envelopes without an ID. Wire validation checks required/unknown fields, booleans, extension arrays, integers, minima, and enums without coercion. Handlers apply shared semantic policies such as the repository-key pattern before collection. Error codes distinguish malformed JSON (`-32700`), envelopes (`-32600`), unknown methods (`-32601`), arguments (`-32602`). Failed analysis and refused replacement use MCP tool results with `isError: true`. `ping` returns `{}`.
 
 JSON decoder `ValueError` failures, including oversized integer literals, return parse error `-32700` and leave the MCP session available for the next request.
 
@@ -99,6 +103,8 @@ The internal structural representation is a `CodeNode` tree with:
 
 Internal node IDs do not depend on names, parents, or ending spans. They change when an origin moves; retrieval-facing documents have separate semantic external IDs.
 
+Internal request/file APIs use `AnalysisRequest.supported_extensions` and file `extension` properties. The parser registry and `extract_comments` share the extension names `py` and `md`. The CLI flag `--languages` and MCP field `languages` remain unchanged. `CollectedFile` rejects empty `relative_path` values, and projectors use that canonical path directly.
+
 ### 4.2 Public projections
 
 RepoGPT currently exposes two projection families:
@@ -115,11 +121,13 @@ Projection rules:
 
 ## 5. Public artifact contracts
 
-### 5.1 AST export (`schema_version: "2"`)
+### 5.1 AST export (`schema_version: "3"`)
 
 AST export is the direct structural projection of parsed files.
 
-In both formats, `--flatten node` emits each node as a flat record. `--flatten file` emits one root record per file with its entire nested subtree. Its `children` recursively follow the node schema, without the top-level record wrapper fields. Both layouts use AST v2 and expose `start_column`.
+In both formats, `--flatten node` emits each node as a flat record. `--flatten file` emits one root record per file with its entire nested subtree. Its `children` recursively follow the node schema, without the top-level record wrapper fields. Both layouts use AST v3 and expose `start_column`.
+
+Imported names have one location in `dependencies`, not `attributes.imported_names`. Link text is `name`, its destination is `attributes.url`, and its column is the node's `start_column`; links have empty dependencies. Modules use `path` without an `attributes.relative_path` duplicate.
 
 Formats:
 
@@ -142,9 +150,9 @@ NDJSON record types:
 
 Schema file:
 
-- `src/repogpt/schemas/ast-v2.schema.json`
+- `src/repogpt/schemas/ast-v3.schema.json`
 
-### 5.2 Code-units (`schema_version: "5"`)
+### 5.2 Code-units (`schema_version: "6"`)
 
 `code-units` is the retrieval-oriented projection.
 
@@ -164,6 +172,7 @@ Document-level fields with contract significance:
 
 - `external_id`
 - `source_id`
+- `repo_key`, `scope`, and `snapshot_id` on every document
 - `path`
 - `language`
 - `unit_type`
@@ -190,7 +199,7 @@ Contract notes:
 - an explicit `repo_key` makes identity portable across clones and must match `[a-z0-9][a-z0-9._-]{0,127}` without normalization
 - `scope` is `repogpt:{repo_key}`; language and test filters do not create additional scopes
 - `replace_scope` defaults to `false`; explicit replacement requires all languages, tests included, non-empty documents, no failures/early stop, and no eligible candidates omitted by size/binary guards
-- retrieval fields have one representation at the document top level; `metadata` contains only file digest, tags, parser attributes, and dependencies
+- retrieval fields have one representation at the document top level; `metadata` contains exactly `file`, `tags`, and `attributes`, without dependencies
 - every parsed file emits a root module. Its content concatenates lines outside all emitted non-module spans; inclusive `content_ranges` identifies the source intervals, and empty modules remain structural containers
 - `container_id` points to the nearest emitted ancestor; a module points to itself
 
@@ -200,36 +209,47 @@ Containers and ancestry use the same name map. Internal node IDs derive from rel
 
 Schema file:
 
-- `src/repogpt/schemas/code-units-v5.schema.json`
+- `src/repogpt/schemas/code-units-v6.schema.json`
 
-The schema files are package resources included in wheels and source distributions, accessible through `importlib.resources.files("repogpt").joinpath("schemas")`. They are public contract validation helpers. They are validated against golden fixtures in tests and are not part of runtime artifact emission.
+The schema files are package resources included in wheels and source distributions, accessible through `importlib.resources.files("repogpt").joinpath("schemas")`. Object fields are closed throughout: envelopes, recursive nodes, failure records, statistics, metadata, and each parser-emitted attribute/metric variant reject unknown keys. This is a fixed contract, including node-type-specific empty objects. Schema changes accompany explicit contract versioning. Tests validate real exports and golden fixtures; artifact emission does not run a runtime JSON Schema validator. MCP discovery embeds these definitions in its output schemas without external schema retrieval.
 
 ## 6. Retrieval profile semantics
 
 RepoGPT includes lightweight retrieval helpers over `code-units`. These are interoperability helpers, not a built-in production retrieval engine.
 
-### 6.1 `flat_rag_v2`
+### 6.1 `flat_rag_v3`
 
 - rank only positive-scoring documents for a query, excluding blank structural modules
 - return the top `k` seed items
 - perform no structural expansion
 
-### 6.2 `structured_rag_v2`
+### 6.2 `structured_rag_v3`
 
 - rank documents for a query
 - keep the same top `k` seed items
 - add at most one nearest emitted enclosing container hop per seed when it has nonblank content
 - deduplicate by `external_id`
 
-### 6.3 Benchmark scope
+### 6.3 Canonical model context
+
+`assemble_flat_bundle` and `assemble_structured_bundle` are public helpers in `repogpt.utils.retrieval_profiles`, each accepting `(documents, *, query_text, top_k=3)`. Their raw `items` remain selected source documents, including overlapping class/method and heading/subheading content. Both return a separate `context` with `text` and `segments` for model consumption.
+
+Context assembly groups physical lines by `(scope, snapshot_id, source_id, path, metadata.file.sha256)`. It merges covered lines within each group, coalesces contiguous intervals, and rejects conflicting text at the same coordinate. Different provenance groups stay separate. Module `content_ranges` map concatenated residual text to its original inclusive intervals; other documents use their complete source spans. Invalid ranges, missing provenance, and mismatched line counts fail rather than falling back to raw concatenation.
+
+Each rendered interval has a JSON provenance header and exact source content. Separators and headers are included in `context_characters`. Segment records include source identity, file hash, inclusive source interval, contributing external IDs, and `text_start`/`text_end` character offsets; `context.text[text_start:text_end]` selects its source content. `estimated_tokens` equals `ceil(len(context.text) / 4)` and is a rough estimate, not a model tokenizer count.
+
+Callers feed `bundle["context"]["text"]` to their own prompt builder. These helpers do not change exported content, raw retrieval items, or downstream RAG prompt construction.
+
+### 6.4 Comparison scope
 
 The benchmark path compares profile behavior on:
 
 - selected items
 - expansion count
-- rough token estimate
+- deduplicated rendered context characters and segment count
+- rough token estimate of that rendered context
 
-The benchmark and MCP comparison share a loader that checks the v5 envelope and required retrieval fields and rejects duplicate identities or malformed entries. `top_k` must be a non-negative integer; zero and unmatched queries return empty bundles.
+The diagnostic script and MCP comparison share a loader that checks the v6 envelope and required retrieval fields and rejects duplicate identities or malformed entries. Assembly additionally validates selected documents' context provenance and spans. `top_k` must be a non-negative integer; zero and unmatched queries return empty bundles. Comparison returns profile summaries and external IDs rather than the full context text.
 
 Comparison ranks once and shares the same seeds across both profiles. It does not claim end-to-end task quality, production relevance quality, or agentic performance.
 
@@ -268,7 +288,7 @@ Python comment extraction removes one delimiter `#`, preserving further hashes w
 
 An evaluation of `markdown-it-py` 4.2.0 did not meet RepoGPT's exact source-column requirement: block tokens provide line ranges, while inline link tokens lack positions after list and blockquote prefixes are stripped. Reconstructing columns across lazy continuations, tabs, and CRLF would require duplicating the parser's internal source mapping. The maintained structural parser therefore remains the implementation for this contract.
 
-Preamble fenced-code identities use `@module`, which cannot be produced by heading slugification. Fences under a literal `# Root` heading therefore retain their IDs and ordinals when a preamble fence is added or removed. The previous preamble `root` namespace is not retained as an alias; consumers should regenerate observations as described in the changelog.
+Preamble fenced-code identities use `@module`, which cannot be produced by heading slugification. Fences under a literal `# Root` heading therefore retain their IDs and ordinals when a preamble fence is added or removed.
 
 ### 7.3 Failure and exit semantics
 
@@ -284,6 +304,8 @@ Invariants:
 - file output uses a temporary file in the destination directory followed by atomic replacement; write errors preserve the previous destination
 - writers propagate destination-specific I/O errors; entrypoints own the error diagnostic
 - CLI input I/O failures and internal consistency failures have distinct analysis diagnostics, without redirecting STDOUT
+
+The file writer returns an immutable size/SHA-256 receipt only after successful atomic publication, hashing the serialized UTF-8 chunks during writing. STDOUT output returns no receipt. CLI ignores the receipt; MCP uses it for compact file-mode responses. Internal duplicate IDs, invalid source spans, and absent emitted containers raise `ArtifactConsistencyError` while preserving the diagnostic detail.
 
 Public exit-code policy:
 
@@ -322,6 +344,8 @@ Interfaces   -> Application + Adapters + Domain + Ports + Utils
 
 The structural representation must not depend on any concrete parser implementation or retrieval engine.
 
+Package initializers retain package boundaries without re-exporting internal classes or helpers. Python callers import their defining modules directly.
+
 These rules describe dependencies between RepoGPT layers; imports within a layer and standard-library imports are separate. `tests/unit/test_architecture.py` derives the internal dependency edges from source imports, including relative imports, and checks the allowed directions. Its narrower checks also keep I/O/logging implementation out of analysis orchestration and concrete parsers out of the collector and CLI.
 
 ## 9. Observability and operational boundaries
@@ -340,13 +364,19 @@ Known operational boundaries:
 
 These are implementation boundaries, not contract changes.
 
+### Cleanup boundary
+
+`make clean` runs `scripts/clean_artifacts.py` to remove `__pycache__`, `.pytest_cache`, and `.pyc` files within the permitted tree. `make distclean` additionally targets root `.mypy_cache`, `.ruff_cache`, `build`, `dist`, and `*.egg-info` directly under the root or `src`.
+
+The helper plans and preflights removals before changing files. It does not follow directory symlinks, and artifact symlinks are unlinked at the leaf. Named `.venv`, `.git`, `.agents`, `.codex`, and `.aws` paths and directories containing `pyvenv.cfg` are protected. A removal tree containing any protected path or environment causes refusal before any deletion, including when a build/cache directory itself is a virtual environment. Inspection or traversal errors abort cleanup.
+
 ## 10. Deliberately out of scope
 
 The current architecture does not commit to:
 
 - a built-in production retrieval engine
 - graph-rich public relation APIs
-- context-bundle contracts
+- downstream prompt-building and orchestration policies
 - agentic orchestration loops
 - full call-graph or reference-graph accuracy
 

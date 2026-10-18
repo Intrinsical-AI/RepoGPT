@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.0 (unreleased)
+
+- **Breaking artifact contracts:** AST v3 and code-units v6 replace their prior generations. Regenerate artifacts and update consumers together; the retrieval loader accepts v6 only. Schemas reject unknown fields throughout recursive nodes, failures, statistics, metadata, and parser-specific attributes and metrics.
+- AST import names are canonical in `dependencies`; remove `attributes.imported_names`. Links use `name`, `attributes.url`, and node `start_column`, without duplicate text/column attributes or link dependencies. Modules use `path`, without `attributes.relative_path`. Code-units metadata contains exactly `file`, `tags`, and `attributes`; per-document `repo_key`, `scope`, `snapshot_id`, and `source_id` remain.
+- MCP supports only protocol 2025-06-18 and returns native `structuredContent` plus identical compact JSON text. Inline AST NDJSON uses an object containing `schema_version`, `format`, and `records`. Tool discovery includes strict output schemas covering artifacts, receipts, and execution-error objects.
+- MCP comparison accepts `top_k` (integer >= 0, default 3), validating it before artifact reads. Emit tools accept `output_path`; file mode atomically replaces an existing regular artifact and returns path, format, schema version, byte size, SHA-256, and statistics. The receipt hashes the written UTF-8 chunks without rereading the destination. Path protections reject standard-I/O aliases, symlink/non-regular leaves, and existing repository source files, including filtered or fail-fast-unvisited files. Missing parent directories are not created.
+- Retrieval profiles v3 preserve raw selected `items` and add deduplicated model context through `context.text` and provenance segments. The public `assemble_flat_bundle` and `assemble_structured_bundle` helpers merge overlapping physical source lines only within the same scope, snapshot, source, path, and file hash. Module residual ranges remain exact; conflicting coordinates fail. Token estimates use rendered context characters, including headers and separators. Comparison exposes context sizes; downstream RAG prompt builders are unchanged.
+- Python integration uses concrete module imports instead of package-level reexports. File/request fields and comment extraction use extension names consistently; CLI `--languages` and MCP `languages` remain unchanged. File models reject empty relative paths. Projectors use canonical paths, digest ordering, and statistics without redundant fallbacks or summary construction.
+- `make clean` uses a scoped helper for bytecode and pytest caches. `make distclean` additionally removes explicit root build/distribution/tool caches and root/`src` egg-info. Cleanup prunes named metadata and virtual environments of any name, never follows directory symlinks, and refuses protected removal trees before deleting anything.
+
 ## 0.10.0 (unreleased)
 
 - AST v2 derives node IDs from source origin and exports character-based `start_column`; syntax errors use relative paths and portable formatting.

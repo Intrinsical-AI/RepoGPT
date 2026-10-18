@@ -1,21 +1,23 @@
 # RepoGPT Roadmap
 
-This roadmap starts after the current shipped baseline:
+This roadmap starts after the current 0.11.0 source baseline (unreleased):
 
 - CLI and MCP stdio interfaces
-- AST export (`schema_version: "2"`)
-- `code-units` (`schema_version: "5"`)
-- public JSON Schemas for AST v2 and `code-units` v5
+- AST export (`schema_version: "3"`)
+- `code-units` (`schema_version: "6"`)
+- fully closed public JSON Schemas for AST v3 and `code-units` v6
 - golden artifact schema validation in integration tests
-- built-in retrieval profile comparison for `flat_rag_v2` and `structured_rag_v2`
+- MCP 2025-06-18 native structured results, output schemas, configurable comparison, and atomic artifact file output
+- public flat/structured bundle helpers and comparison for `flat_rag_v3` and `structured_rag_v3`, with provenance-aware deduplicated model context
 
 The items below are forward-looking only.
 
 ## Near-term priorities
 
-### 1. Contract hardening and examples
+### 1. Consumer acceptance and examples
 
 - add more end-to-end examples for CLI, MCP, and downstream `code-units` consumption
+- verify the new artifact generation with downstream consumers before adopting it in live import paths
 - extend contract coverage around additional edge cases that matter to external consumers
 - document extension points only where the interfaces are stable enough to maintain
 
@@ -63,9 +65,9 @@ The items below are forward-looking only.
 - keep retrieval behavior layered on top of projections rather than coupled to parser internals
 - define bundle assembly policies explicitly before adding broader orchestration logic
 
-### 3. Agent-facing context assembly
+### 3. Broader context policies
 
-- evaluate context-bundle contracts only after projection and retrieval semantics are stable
+- evaluate budgets, truncation, and ordering policies beyond the current provenance-aware context assembly
 - keep agentic workflows out of scope until the non-agentic interfaces are mature and measurable
 
 ## Guardrails
