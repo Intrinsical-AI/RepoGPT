@@ -290,6 +290,21 @@ def test_collect_skips_symlinks_by_default(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFOs require os.mkfifo")
+def test_collect_records_non_regular_files_without_opening_them(tmp_path: Path) -> None:
+    fifo = tmp_path / "stream.py"
+    os.mkfifo(fifo)
+
+    with patch("repogpt.adapters.fs.collector.is_likely_binary") as sniff:
+        files, skipped = DefaultCollector().collect(AnalysisRequest(repo_root=tmp_path), {"py"})
+
+    assert files == []
+    sniff.assert_not_called()
+    assert [(item.relative_path, item.reason) for item in skipped] == [
+        ("stream.py", "non_regular_file")
+    ]
+
+
 def test_collect_handles_long_relative_paths_in_output(tmp_path: Path) -> None:
     nested = tmp_path
     for _ in range(3):

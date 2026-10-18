@@ -102,6 +102,7 @@ class DefaultCollector(CollectorPort):
             except OSError as exc:
                 raise CollectionFailure(f"Cannot stat {relative_path}: {exc}") from exc
             if not stat.S_ISREG(info.st_mode):
+                skip(path, "non_regular_file")
                 continue
             extension = path.suffix.lstrip(".").lower()
             if extension not in supported_extensions:
