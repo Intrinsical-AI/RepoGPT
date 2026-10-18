@@ -1,4 +1,4 @@
-.PHONY: test lint type format validate clean repogpt
+.PHONY: test lint type format validate clean distclean repogpt
 
 ARGS ?= --help
 
@@ -20,9 +20,10 @@ validate:
 	uv run --locked --group dev pytest -q
 
 clean:
-	find . -type d -name __pycache__ -exec rm -rf {} +
-	find . -type d -name .pytest_cache -exec rm -rf {} +
-	find . -type f -name "*.pyc" -delete
+	uv run --locked --no-sync python scripts/clean_artifacts.py
+
+distclean:
+	uv run --locked --no-sync python scripts/clean_artifacts.py --dist
 
 repogpt:
 	uv run --locked repogpt $(ARGS)
