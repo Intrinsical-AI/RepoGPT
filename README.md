@@ -39,7 +39,7 @@ uv sync
 ```
 
 RepoGPT uses `uv` as the supported local and CI bootstrap path.
-For development validation tools such as `pre-commit`, `mypy`, and schema tests, install the dev extra with `uv sync --extra dev --locked`.
+For development validation tools such as `pre-commit`, `mypy`, and schema tests, install the dev dependency group with `uv sync --locked --group dev`.
 
 ## Quick start
 
@@ -94,11 +94,13 @@ Notes:
 | `0` | All collected files parsed successfully, or the STDOUT consumer closed its pipe early. |
 | `1` | `--fail-fast` stopped the run after the first parse error. |
 | `2` | Invalid arguments (no artifact), or per-file parse/decode failures with an emitted artifact. |
-| `3` | Invalid repository, collection/read/write failure, or refused scope replacement. |
+| `3` | Invalid repository, collection/read/write failure, refused scope replacement, or internal consistency failure. |
 
 Parse/decode failures normally emit an artifact and return `2`, or `1` with `--fail-fast`. An explicit replacement request takes precedence: incomplete results return `3` without emitting an artifact. Collection and input-read failures also return `3` before any output. File output is written to a temporary file in the destination directory, then atomically replaced; a failed write preserves the prior artifact. Existing file permissions are retained, while new files follow the process umask.
 
 Closing a pipe early, as with `repogpt ... --stdout | head -c 200`, returns `0` without a write-error diagnostic or shutdown traceback. This status acknowledges the consumer's early close; it does not certify delivery of a complete artifact or a complete analysis. Other output I/O errors return `3` with one destination-specific diagnostic.
+
+Input I/O errors are reported as analysis failures; internal consistency failures have a dedicated diagnostic. Neither uses output-stream cleanup. The exit codes above apply to both cases.
 
 ## Collection and skip rules
 
@@ -115,6 +117,7 @@ Additional collection rules:
 - `test/`, `tests/`, `test_*`, `test-*`, `*_test.py`, and `conftest.py` paths are skipped unless `--include-tests` is set
 - files larger than `2_000_000` bytes are skipped
 - symlinks are skipped
+- non-regular files are skipped with the internal reason `non_regular_file`
 - likely binary files are skipped
 - unsupported extensions and supported languages excluded by `--languages` have distinct skip reasons
 
@@ -158,11 +161,17 @@ Decorated Python declarations begin at the first `@` token, including multiline 
 
 Python decoding honors UTF-8 BOMs and encoding cookies, with strict decoding and failures retaining the original byte digest. Spans and comment positions use physical LF, CRLF, or CR lines; other Unicode separators do not add lines. Python traversal includes control-flow branches, exception handlers, finalizers, and match cases. Import attributes include the integer `import_level` (`0` for absolute imports).
 
+Python visibility follows naming conventions: names beginning and ending with `__`, including `__init__` and `__repr__`, are public; other double-leading-underscore names are private, and single-leading-underscore names are protected.
+
 Python comment text removes one leading `#` and trims leading spaces and trailing whitespace; further `#` characters are preserved. Tags are parser-specific: Markdown tags its module with `TODO`/`FIXME` found in HTML comments; Python exposes comments without deriving these tags. Python signatures are structural summaries, not a source-formatting or PEP 8 contract.
 
 Markdown fences accept three or more backticks or tildes, up to three leading spaces, and close only with the same character, sufficient length, and trailing spaces/tabs. Headings, links, and HTML comments inside fences are not extracted. ATX headings allow up to three leading spaces, list-item headings, empty titles, and optional closing hashes. Link extraction skips complete inline code spans within recognized text blocks, including spans across physical lines, as well as image links; source columns remain character offsets in the original line.
 
+Within a physical line, inline links support nested brackets in labels, escaped delimiters, up to 32 nested balanced parentheses in destinations, and optional quoted or parenthesized titles. Deeper destination nesting is rejected. The extracted URL contains only the destination and preserves its escape spelling. Reference links, autolinks, and multiline links remain outside this structural subset.
+
 Links in indented code are suppressed, using four-column tab stops and indentation relative to list content. Indentation within a continuing paragraph remains prose. This filtering adds no nodes for indented blocks: `code_block` nodes and their count still describe fences. The maintained Markdown parser is a structural subset, not a complete CommonMark renderer.
+
+Markdown decoding uses strict UTF-8 with an optional BOM. Invalid bytes produce a decode failure retaining the original byte digest and prevent scope replacement.
 
 ### Code-units (`schema_version: "5"`)
 
@@ -207,16 +216,11 @@ Repository identity and replacement:
 - Automatic `repo_key` is `local-` plus the full SHA-256 of the OS-normalized, resolved absolute repository path. Symlink aliases resolve to the same identity; independent clones and moved repositories get different identities.
 - Use the same explicit `--repo-key` across clones to share an identity. Keys are validated without normalization. Scope is always `repogpt:{repo_key}`.
 - `replace_scope` defaults to `false`, including empty and partial exports. `--replace-scope` requires `--include-tests` and all supported languages, a non-empty document list, no parse/decode failures, no early stop, and no eligible files omitted by size or binary guards. Known ignore rules and symlink exclusions delimit the collection universe.
-
-Markdown decoding uses strict UTF-8 with an optional BOM. Invalid bytes produce
-a decode failure and prevent scope replacement rather than silently changing
-the source text. The RAG v5 consumer separately limits nonblank imported units
-to 20,000 characters, external IDs to 512 characters, source IDs to 1,024
-characters, and snapshots to 5,000 nonblank documents. A valid RepoGPT artifact
-can exceed those consumer limits and be refused before import.
 - Repeated Python declarations receive `~2`, `~3`, etc. in their qualified names and IDs, including descendants of repeated containers. `symbol` retains the source name.
 - Markdown headings reserve natural sibling slugs: `A`, `A`, `A-2` becomes `a`, `a-3`, `a-2`. Qualified names, IDs, containers, and ancestry use the same assignment. Residual internal or external ID collisions abort emission.
 - Preamble code fences use the reserved `@module` section, independently of a literal `# Root` heading. This changes their previous `root` IDs; see the regeneration guidance in [CHANGELOG.md](CHANGELOG.md).
+
+The RAG v5 consumer separately limits imported content, identifiers, and snapshot size. See its [canonical import contract at revision `2157b93`](https://github.com/Intrinsical-AI/rag-prototype/blob/2157b93dd97515482abb285e1ace459e954d799b/src/local_rag_backend/core/services/canonical_import_transport.py#L22-L62). A valid RepoGPT artifact can exceed those consumer limits and be refused before import.
 
 ### Public JSON Schemas
 
@@ -268,7 +272,7 @@ Tool arguments:
 
 `languages` is an array of parser extensions such as `["py", "md"]`; values are normalized like the CLI. An empty array collects no files. Unsupported values return a JSON-RPC tool error.
 
-`repogpt_compare_profiles` expects a path to an existing `code-units` artifact on disk. Each tool returns an MCP result with `content` and `isError`; the JSON text directly contains the artifact or comparison, without CLI exit codes or an extra payload envelope. Tool execution failures set `isError: true`. Partial and fail-fast artifacts remain available in the result and also set `isError: true`.
+`repogpt_compare_profiles` expects a path to an existing `code-units` artifact on disk. Each tool returns an MCP result with `content` and `isError`; successful JSON text directly contains the artifact or comparison, without CLI exit codes or an extra payload envelope. Tool execution failures return `{"error":"message"}` as JSON text in `content` with `isError: true`. Partial and fail-fast artifacts retain their artifact payload and also set `isError: true`.
 
 Required fields, unknown arguments, types, and enums are checked against the published tool schema; booleans are never coerced from strings or numbers. Invalid arguments use `-32602`, malformed JSON `-32700`, invalid envelopes `-32600`, and unknown methods `-32601`. Analysis failures and refused replacements use tool results with `isError: true`. Valid notifications receive no response and never dispatch tools. All entry-point logs go to STDERR; importing the MCP module does not configure logging. The session can handle subsequent requests after a failed request.
 
@@ -307,17 +311,10 @@ RepoGPT keeps data and logs separate:
 - artifact data -> STDOUT or output file
 - logs -> STDERR
 
-Example log lines:
+Example STDERR from `repogpt tests/fixtures/cli_repo --stdout --include-tests` (exit `2`):
 
 ```text
-2026-03-24 02:45:04 [info     ] starting run                   format=json repo=/abs/path/to/repo
-2026-03-24 02:45:04 [error    ] parse error                    path=bad.py error='File "/abs/path/to/repo/bad.py", line 1
-
-    def broken(:
-
-               ^
-
-SyntaxError: invalid syntax'
+2026-10-19 00:13:43 [error    ] parse error                    error='File "bad.py", line 1\n    def broken(:\n               ^\nSyntaxError: invalid syntax' path=bad.py
 ```
 
 ## Development workflow
@@ -332,25 +329,30 @@ SyntaxError: invalid syntax'
 
 Local hooks invoke the Ruff and Mypy versions in `uv.lock`; they do not install separate tool versions. Formatting is checked without modifying files. Hooks do not run `pytest`; `make validate` runs the locked environment sync, hooks, and full test suite, and is also the CI command.
 
+Development tools belong to the `dev` dependency group and are not published as a package extra. CI runs `make validate` on Python 3.10 through 3.15.
+
 Setup and common commands:
 
 ```bash
-uv sync --extra dev --locked
-uv run pre-commit install
-uv run pre-commit run --all-files
-uv run pytest -q
+uv sync --locked --group dev
+uv run --locked --group dev pre-commit install
+uv run --locked --group dev pre-commit run --all-files
+uv run --locked --group dev pytest -q
 ```
 
 ### Make targets
 
 | Target | Command | Description |
 | --- | --- | --- |
-| `make lint` | `uv run --locked --extra dev ruff check .` | Lint the codebase |
-| `make type` | `uv run --locked --extra dev mypy src tests` | Run type checks |
-| `make test` | `uv run --locked --extra dev pytest -q` | Run the test suite |
-| `make format` | `uv run --locked --extra dev ruff format .` | Apply formatting |
+| `make lint` | `uv run --locked --group dev ruff check .` | Lint the codebase |
+| `make type` | `uv run --locked --group dev mypy src tests` | Run type checks |
+| `make test` | `uv run --locked --group dev pytest -q` | Run the test suite |
+| `make format` | `uv run --locked --group dev ruff format .` | Apply formatting |
 | `make validate` | locked sync, hooks, pytest | Run the local and CI gate |
 | `make clean` | cleanup helpers | Remove Python cache artifacts |
+| `make repogpt` | `uv run --locked repogpt $(ARGS)` | Show CLI help by default (`ARGS=--help`); pass `ARGS` to analyze a repository |
+
+For example: `make repogpt ARGS='path/to/repo --stdout --include-tests'`.
 
 ## Project layout
 

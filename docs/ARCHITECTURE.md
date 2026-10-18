@@ -78,9 +78,11 @@ Built-in tools:
 - `repogpt_emit_ast`
 - `repogpt_compare_profiles`
 
-The MCP server reuses the same analysis runtime and language-filter validation semantics as the CLI. It does not introduce a separate artifact contract. Tool results contain `content` and `isError`. JSON text contains the artifact or comparison directly; AST NDJSON uses an array of records. No CLI exit code, empty stderr field, or extra artifact/comparison envelope is carried. Tool execution failures set `isError: true`, including partial/fail-fast artifacts whose file errors remain inspectable.
+The MCP server reuses the same analysis runtime and language-filter validation semantics as the CLI. It does not introduce a separate artifact contract. Tool results contain `content` and `isError`. Successful JSON text contains the artifact or comparison directly; AST NDJSON uses an array of records. Tool execution failures contain JSON text `{"error":"message"}` and set `isError: true`. Partial/fail-fast results retain their artifact payload with `isError: true`, so file errors remain inspectable.
 
 Both entry points configure structlog output on STDERR. Importing the MCP module does not configure logging. Valid notifications receive no responses and do not dispatch tools; invalid envelopes are rejected before notification handling, including envelopes without an ID. Wire validation checks required/unknown fields, booleans, language arrays, and enums without coercion. Handlers apply shared semantic policies such as the repository-key pattern before collection. Error codes distinguish malformed JSON (`-32700`), envelopes (`-32600`), unknown methods (`-32601`), arguments (`-32602`). Failed analysis and refused replacement use MCP tool results with `isError: true`. The advertised MCP 2024-11-05 protocol answers `ping` with `{}`.
+
+JSON decoder `ValueError` failures, including oversized integer literals, return parse error `-32700` and leave the MCP session available for the next request.
 
 CLI rejects conflicting output targets and explicit AST-only flattening options on code-units exports before analysis. The application validates each analysis request once; CLI maps invalid requests to argument diagnostics.
 
@@ -184,14 +186,17 @@ Contract notes:
 - `external_id` is the semantic public identifier for a projected document
 - `content_hash` is `sha256(content)`; non-module content is an exact source span
 - `snapshot_id` is a repository-snapshot provenance marker derived from collected file hashes
-- `repo_key` defaults to `local-` plus the full SHA-256 of the OS-normalized canonical absolute path; an explicit validated key makes identity portable across clones
+- `repo_key` defaults to `local-` plus the full SHA-256 of the OS-normalized canonical absolute path; symlink aliases share an identity, while moving a repository or using another clone changes the automatic key
+- an explicit `repo_key` makes identity portable across clones and must match `[a-z0-9][a-z0-9._-]{0,127}` without normalization
 - `scope` is `repogpt:{repo_key}`; language and test filters do not create additional scopes
 - `replace_scope` defaults to `false`; explicit replacement requires all languages, tests included, non-empty documents, no failures/early stop, and no eligible candidates omitted by size/binary guards
 - retrieval fields have one representation at the document top level; `metadata` contains only file digest, tags, parser attributes, and dependencies
 - every parsed file emits a root module. Its content concatenates lines outside all emitted non-module spans; inclusive `content_ranges` identifies the source intervals, and empty modules remain structural containers
 - `container_id` points to the nearest emitted ancestor; a module points to itself
 
-A single semantic traversal assigns qualified names and external IDs. Python sibling redeclarations append `~2`, `~3`, etc.; descendants inherit the disambiguated segment. Markdown duplicate heading slugs avoid reserved natural sibling slugs. Containers and ancestry use the same name map. Internal node IDs are checked before projection; duplicate external IDs reject emission. See [CHANGELOG.md](../CHANGELOG.md) for current identity rules.
+A single semantic traversal assigns qualified names and external IDs. The first Python declaration keeps its name segment; later siblings append `~2`, `~3`, etc., and descendants inherit the disambiguated segment. `symbol` retains the source name. Markdown duplicate heading slugs reserve natural sibling slugs: `A`, `A`, `A-2` becomes `a`, `a-3`, `a-2`. Preamble code fences use `@module`, a namespace heading slugs cannot produce, so their IDs cannot collide with fences under a literal `# Root` heading.
+
+Containers and ancestry use the same name map. Internal node IDs derive from relative path, node type, initial source line, and character column; names, parent IDs, and ending spans do not affect them. Internal node IDs are checked before projection, and duplicate external IDs reject emission. RepoGPT emits artifacts; consumers own imports and scope deletion, and should replace scopes only with an accepted complete snapshot.
 
 Schema file:
 
@@ -243,6 +248,7 @@ Collection behavior is deterministic and currently includes:
 - file-size guard
 - binary-file detection
 - symlink exclusion
+- explicit `non_regular_file` skip records for other non-regular files
 
 ### 7.2 Parsing and projection
 
@@ -254,13 +260,15 @@ For each collected file:
 4. record parse failures explicitly
 5. project the aggregate result to AST or `code-units`
 
-Python decoding uses `tokenize.detect_encoding` and strict decoding, retaining the raw byte digest even when decoding fails. Markdown uses UTF-8-sig replacement decoding. Source lines, spans, metrics, and comments share LF/CRLF/CR boundaries. Python traverses all statement branches while preserving declaration scopes and source order; imports retain their relative level. Markdown fences retain opening character and length, and nodes retain original character columns.
+Python decoding uses `tokenize.detect_encoding` and strict decoding. Markdown uses strict UTF-8-sig decoding, accepting an optional BOM. Both retain the raw byte digest when decoding fails, and a decode failure prevents scope replacement. Source lines, spans, metrics, and comments share LF/CRLF/CR boundaries. Python traverses all statement branches while preserving declaration scopes and source order; imports retain their relative level. Markdown fences retain opening character and length, and nodes retain original character columns.
+
+Python visibility treats names beginning and ending with `__` as public, other double-leading-underscore names as private, and single-leading-underscore names as protected. Within a physical line, Markdown inline links support nested bracket labels, escaped delimiters, up to 32 nested balanced destination parentheses, and optional quoted or parenthesized titles; deeper nesting is rejected. URL attributes contain only the destination and preserve its escape spelling. Reference links, autolinks, and multiline links are outside this structural subset.
 
 Python comment extraction removes one delimiter `#`, preserving further hashes while trimming leading spaces and trailing whitespace. Tags remain parser-specific: Markdown module tags reflect TODO/FIXME in HTML comments; Python exposes comments without generating those tags. Markdown link filtering tracks indented code, paragraph continuations, and list indentation using four-column tab stops. List-contained fences retain original file spans, use the enclosing list indentation for closing fences, and end as unclosed when the container ends. Block starts inside lists reset paragraph continuation, so a following indented code block contributes no links. These boundaries follow the [CommonMark list-item and indented-code rules](https://spec.commonmark.org/0.31.2/#list-items); the parser remains a structural subset of Markdown. Indented blocks do not add new IR nodes or affect the fenced-code-block count.
 
 An evaluation of `markdown-it-py` 4.2.0 did not meet RepoGPT's exact source-column requirement: block tokens provide line ranges, while inline link tokens lack positions after list and blockquote prefixes are stripped. Reconstructing columns across lazy continuations, tabs, and CRLF would require duplicating the parser's internal source mapping. The maintained structural parser therefore remains the implementation for this contract.
 
-Preamble fenced-code identities use `@module`, which cannot be produced by heading slugification. Fences under a literal `# Root` heading therefore retain their IDs and ordinals when a preamble fence is added or removed. The previous preamble `root` namespace is not retained as an alias; consumers should regenerate observations as described in the changelog. JSON decoder `ValueError` failures, including oversized integer literals, are parse errors and leave the MCP session available for the next request.
+Preamble fenced-code identities use `@module`, which cannot be produced by heading slugification. Fences under a literal `# Root` heading therefore retain their IDs and ordinals when a preamble fence is added or removed. The previous preamble `root` namespace is not retained as an alias; consumers should regenerate observations as described in the changelog.
 
 ### 7.3 Failure and exit semantics
 
@@ -275,13 +283,14 @@ Invariants:
 - an explicit replacement request rejects incomplete results before writing
 - file output uses a temporary file in the destination directory followed by atomic replacement; write errors preserve the previous destination
 - writers propagate destination-specific I/O errors; entrypoints own the error diagnostic
+- CLI input I/O failures and internal consistency failures have distinct analysis diagnostics, without redirecting STDOUT
 
 Public exit-code policy:
 
 - `0`: success, or early close by the STDOUT consumer
 - `1`: fail-fast stopped on first parse error
 - `2`: partial parse/decode run with emitted artifact, or argument rejection without an artifact
-- `3`: invalid path, I/O error, refused replacement, or unrecoverable runtime error
+- `3`: invalid path, I/O error, refused replacement, internal consistency failure, or unrecoverable runtime error
 
 Replacement refusal takes precedence over normal partial/fail-fast emission. Known ignores and symlink exclusions define the collection universe; defaults do not imply a complete repository export. Downstream consumers own import and deletion operations.
 

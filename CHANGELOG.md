@@ -7,6 +7,11 @@
 - Collection reports pruned directories and distinguishes language filtering. `env`, `build`, and `dist` are no longer global ignores; each repository can exclude them in `.repogptignore`.
 - Markdown parsing corrects ATX headings, links inside code and images, and TODO/comment detection. The external-parser experiment did not pass exact source-column mapping, so the existing parser remains.
 - The local `rag-prototype` integration moves to v5 in the same change. There is no v4 alias or automatic migration; regenerate local artifacts and reingest them.
+- Markdown decoding rejects invalid UTF-8 instead of replacing bytes, retaining the original digest and refusing scope replacement after a decode failure.
+- Python special methods such as `__init__` and `__repr__` have public visibility. Markdown inline links handle nested labels, escaped delimiters, balanced destinations, and optional titles without including titles in URL attributes.
+- MCP execution failures return JSON text `{"error":"message"}` with `isError: true`; successful and partial artifact payloads retain their existing shapes under protocol 2024-11-05.
+- CLI distinguishes input I/O and internal consistency diagnostics from output failures while preserving exit codes. Collection records non-regular files with the internal skip reason `non_regular_file`.
+- Development tools move from a published extra to the `dev` dependency group. CI validates Python 3.10 through 3.15.
 
 ## 0.9.0
 
