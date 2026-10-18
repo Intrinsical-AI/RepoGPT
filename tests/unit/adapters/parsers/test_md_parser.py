@@ -126,6 +126,100 @@ def test_links_ignore_inline_code_and_images_but_keep_escaped_image_marker(
 
 
 @pytest.mark.parametrize(
+    "source,text,url",
+    [
+        ('[x](http://e.com "title")', "x", "http://e.com"),
+        ("[x](u 'title')", "x", "u"),
+        ("[x](u (title))", "x", "u"),
+        ('[x](\tu\t"title"\t)', "x", "u"),
+        ("[a [b]](u)", "a [b]", "u"),
+        ("[x](a(b(c))d)", "x", "a(b(c))d"),
+        (r"[a \[b\]](u\(v\))", r"a \[b\]", r"u\(v\)"),
+        (r'[x](u "say \"hello\"")', "x", "u"),
+        (r"[x](u (ti\)tle))", "x", "u"),
+        ('[x](u "a `code` title")', "x", "u"),
+        ("[a `[hidden]`](u)", "a `[hidden]`", "u"),
+    ],
+)
+def test_inline_links_separate_titles_and_balance_delimiters(
+    tmp_path: Path, source: str, text: str, url: str
+) -> None:
+    root = _parse_text(tmp_path, source + "\n")
+    links = [node for node in flatten_tree(root) if node["type"] == "link"]
+
+    assert [(node["name"], node["attributes"]["url"]) for node in links] == [(text, url)]
+    assert links[0]["attributes"]["text"] == text
+    assert links[0]["dependencies"] == [{"text": text, "url": url}]
+    assert root.metrics["link_count"] == 1
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "[x](u",
+        "[x](u\\",
+        "[x](a(b)",
+        '[x](u "unterminated)',
+        '[x](u "unterminated\\',
+        "[x](u 'unterminated)",
+        "[x](u (unterminated)",
+        '[x](u "title" trailing)',
+        "[x](u unquoted title)",
+        "[x](u `not a title`)",
+        "[unclosed label(u)",
+        r"\[escaped](u)",
+        "![a [b]](image.png)",
+        "`[a [b]](u)`",
+        "[x](`u)`",
+        '[x](u\n"title")',
+        "[x][reference]\n\n[reference]: u",
+    ],
+)
+def test_malformed_or_excluded_inline_links_are_not_extracted(tmp_path: Path, source: str) -> None:
+    root = _parse_text(tmp_path, source + "\n")
+
+    assert [node for node in flatten_tree(root) if node["type"] == "link"] == []
+    assert root.metrics["link_count"] == 0
+
+
+def test_multiple_inline_links_keep_original_unicode_columns(tmp_path: Path) -> None:
+    source = 'π🙂 [a [b]](first "title") and [next](a(b))\n'
+    root = _parse_text(tmp_path, source)
+    links = [node for node in flatten_tree(root) if node["type"] == "link"]
+
+    assert [(node["name"], node["attributes"]["url"]) for node in links] == [
+        ("a [b]", "first"),
+        ("next", "a(b)"),
+    ]
+    columns = [source.index("[a"), source.index("[next]")]
+    assert [node["start_column"] for node in links] == columns
+    assert [node["attributes"]["start_column"] for node in links] == columns
+    assert root.metrics["link_count"] == 2
+
+
+@pytest.mark.parametrize("depth,expected_count", [(32, 1), (33, 0)])
+def test_inline_link_destination_nesting_is_bounded(
+    tmp_path: Path, depth: int, expected_count: int
+) -> None:
+    destination = "(" * depth + "u" + ")" * depth
+    root = _parse_text(tmp_path, f"[x]({destination})\n")
+    links = [node for node in flatten_tree(root) if node["type"] == "link"]
+
+    assert len(links) == expected_count
+    if expected_count:
+        assert links[0]["attributes"]["url"] == destination
+
+
+def test_unclosed_inline_link_keeps_valid_inner_candidate(tmp_path: Path) -> None:
+    root = _parse_text(tmp_path, "[a]([b](u)\n")
+    links = [node for node in flatten_tree(root) if node["type"] == "link"]
+
+    assert [(node["name"], node["attributes"]["url"], node["start_column"]) for node in links] == [
+        ("b", "u", 4)
+    ]
+
+
+@pytest.mark.parametrize(
     "source,expected",
     [
         ("`\n[hidden](wrong)\n` [visible](right)\n", ["visible"]),

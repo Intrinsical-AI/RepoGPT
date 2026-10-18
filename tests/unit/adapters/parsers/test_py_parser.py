@@ -117,6 +117,30 @@ def test_python_import_and_signature_semantics(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.parametrize("declaration", ["def", "async def"])
+@pytest.mark.parametrize(
+    "name,visibility",
+    [
+        ("public", "public"),
+        ("_protected", "protected"),
+        ("__private", "private"),
+        ("__init__", "public"),
+        ("__repr__", "public"),
+        ("__custom__", "public"),
+    ],
+)
+def test_python_method_visibility_respects_special_names(
+    tmp_path: Path, declaration: str, name: str, visibility: str
+) -> None:
+    root = _parse_text(
+        tmp_path, "visibility.py", f"class C:\n    {declaration} {name}(self): pass\n"
+    )
+
+    method = root.children[0].children[0]
+    assert method.type == "method"
+    assert method.attributes["visibility"] == visibility
+
+
 def test_python_ids_are_deterministic() -> None:
     first = flatten_tree(_parse("basic.py"))
     second = flatten_tree(_parse("basic.py"))

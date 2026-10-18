@@ -337,6 +337,8 @@ class PythonParser(ParserPort):
             return None
 
     def _visibility(self, name: str) -> str:
+        if name.startswith("__") and name.endswith("__"):
+            return "public"
         if name.startswith("__") and not name.endswith("__"):
             return "private"
         if name.startswith("_"):

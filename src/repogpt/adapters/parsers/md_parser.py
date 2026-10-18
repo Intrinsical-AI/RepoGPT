@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -97,9 +98,9 @@ class _OpenFence:
 
 
 class MarkdownParser(ParserPort):
+    MAX_LINK_DESTINATION_DEPTH = 32
     HEADING_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$")
     HEADING_START_RE = re.compile(r" {0,3}#{1,6}(?:[ \t]|$)")
-    LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
     FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 
     @classmethod
@@ -173,6 +174,92 @@ class MarkdownParser(ParserPort):
             position -= 1
         return backslashes % 2 == 0
 
+    @staticmethod
+    def _link_target(line: str, position: int) -> tuple[int, int, int] | None:
+        """Return destination bounds and link end within this masked physical line."""
+        while position < len(line) and line[position] in " \t":
+            position += 1
+        start = position
+        depth = 0
+        while position < len(line):
+            character = line[position]
+            if character == "\\":
+                position += 2
+                continue
+            if character == "(":
+                depth += 1
+                if depth > MarkdownParser.MAX_LINK_DESTINATION_DEPTH:
+                    return None
+            elif character == ")":
+                if depth == 0:
+                    return (start, position, position + 1) if position > start else None
+                depth -= 1
+            elif character in " \t":
+                break
+            position += 1
+        if depth or position == start:
+            return None
+        destination_end = position
+        while position < len(line) and line[position] in " \t":
+            position += 1
+        if position >= len(line):
+            return None
+        if line[position] == ")":
+            return start, destination_end, position + 1
+        delimiter = line[position]
+        if delimiter not in "\"'(":
+            return None
+        closing = ")" if delimiter == "(" else delimiter
+        position += 1
+        while position < len(line):
+            character = line[position]
+            if character == "\\":
+                position += 2
+                continue
+            if character == closing:
+                break
+            if delimiter == "(" and character == "(":
+                return None
+            position += 1
+        if position >= len(line):
+            return None
+        position += 1
+        while position < len(line) and line[position] in " \t":
+            position += 1
+        if position < len(line) and line[position] == ")":
+            return start, destination_end, position + 1
+        return None
+
+    @classmethod
+    def _inline_links(cls, line: str, masked_line: str) -> Iterator[tuple[int, str, str]]:
+        """Balance labels on masked text, retaining spelling and source columns."""
+        starts: list[int] = []
+        position = 0
+        while position < len(masked_line):
+            character = masked_line[position]
+            if character == "\\":
+                position += 2
+                continue
+            if character == "[":
+                starts.append(position)
+            elif character == "]" and starts:
+                start = starts.pop()
+                if position > start + 1 and masked_line[position + 1 : position + 2] == "(":
+                    target = cls._link_target(masked_line, position + 2)
+                    # Masking may hide malformed title text as well as code delimiters.
+                    if target is not None and target == cls._link_target(line, position + 2):
+                        destination_start, destination_end, end = target
+                        if not cls._is_image(line, start):
+                            yield (
+                                start,
+                                line[start + 1 : position],
+                                line[destination_start:destination_end],
+                            )
+                        starts.clear()
+                        position = end
+                        continue
+            position += 1
+
     @classmethod
     def _mask_code_lines(
         cls, content: str, excluded_lines: set[int], inline_lines: dict[int, str]
@@ -205,24 +292,22 @@ class MarkdownParser(ParserPort):
         link_count = 0
         for (line_number, line, parent), masked_line in zip(pending, masked_lines, strict=True):
             inline_lines[line_number] = masked_line
-            for link_match in self.LINK_RE.finditer(masked_line):
-                if self._is_image(line, link_match.start()):
-                    continue
+            for start_column, text, url in self._inline_links(line, masked_line):
                 link_node = new_node(
                     type_="link",
                     path=relative_path,
                     start_line=line_number,
-                    start_column=link_match.start(),
-                    name=link_match.group(1),
+                    start_column=start_column,
+                    name=text,
                     language="md",
                     end_line=line_number,
                     parent_id=parent.id,
                     attributes={
-                        "text": link_match.group(1),
-                        "url": link_match.group(2),
-                        "start_column": link_match.start(),
+                        "text": text,
+                        "url": url,
+                        "start_column": start_column,
                     },
-                    dependencies=[{"text": link_match.group(1), "url": link_match.group(2)}],
+                    dependencies=[{"text": text, "url": url}],
                 )
                 parent.children.append(link_node)
                 link_count += 1
