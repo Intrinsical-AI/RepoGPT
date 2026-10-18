@@ -22,10 +22,10 @@ def count_blank_lines(text: str) -> int:
     return sum(1 for line in physical_lines(text) if not line.strip())
 
 
-def extract_comments(content: str, language: str = "python") -> list[dict[str, Any]]:
+def extract_comments(content: str, extension: str = "py") -> list[dict[str, Any]]:
     """Extract comments with their starting line number."""
     comments = []
-    if language == "python":
+    if extension == "py":
         try:
             normalized = re.sub(r"\r\n?", "\n", content)
             tokens = tokenize.generate_tokens(io.StringIO(normalized).readline)
@@ -42,7 +42,7 @@ def extract_comments(content: str, language: str = "python") -> list[dict[str, A
                 "python comment extraction failed",
                 error=str(exc),
             )
-    elif language == "markdown":
+    elif extension == "md":
         # Pre-compute newline offsets once to avoid O(N*M) line counting.
         newline_offsets = [match.end() - 1 for match in re.finditer(r"\r\n|\r|\n", content)]
         for match in re.finditer(r"<!--(.*?)-->", content, re.DOTALL):

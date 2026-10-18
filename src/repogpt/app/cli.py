@@ -12,7 +12,7 @@ from repogpt.application.exit_codes import (
     EXIT_SUCCESS,
     exit_code_for_result,
 )
-from repogpt.application.languages import UnsupportedLanguagesError, parse_cli_languages
+from repogpt.application.extensions import UnsupportedExtensionsError, parse_cli_extensions
 from repogpt.domain.analysis import AnalysisRequest
 from repogpt.domain.errors import (
     ArtifactConsistencyError,
@@ -66,11 +66,11 @@ def main() -> int:
     analyzer = build_analyze_repo()
 
     try:
-        langs = parse_cli_languages(
+        langs = parse_cli_extensions(
             args.languages,
             supported_extensions=analyzer.parser_registry.supported_extensions(),
         )
-    except UnsupportedLanguagesError as exc:
+    except UnsupportedExtensionsError as exc:
         parser.error(exc.message)
     to_stdout = bool(args.stdout or (args.output and Path(args.output).as_posix() == "/dev/stdout"))
     default_output = "code_units.json" if args.emit == "code-units" else "analysis.json"
@@ -79,7 +79,7 @@ def main() -> int:
     request = AnalysisRequest(
         repo_root=Path(args.repo_path),
         include_tests=args.include_tests,
-        supported_languages=langs,
+        supported_extensions=langs,
         projection="code_units" if args.emit == "code-units" else "ast",
         format=args.format,
         flatten_kind=flatten or "node",

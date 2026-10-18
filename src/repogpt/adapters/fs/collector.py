@@ -83,13 +83,13 @@ class DefaultCollector(CollectorPort):
         files: list[CollectedFile] = []
         paths, skipped = self._candidate_files(repo_root=repo_root, spec=spec)
         enabled_extensions = (
-            set(request.supported_languages)
-            if request.supported_languages is not None
+            set(request.supported_extensions)
+            if request.supported_extensions is not None
             else supported_extensions
         )
 
         def skip(path: Path, reason: str) -> None:
-            skipped.append(SkippedFile(path, path.relative_to(repo_root).as_posix(), reason))
+            skipped.append(SkippedFile(path.relative_to(repo_root).as_posix(), reason))
 
         for path in paths:
             relative_path = path.relative_to(repo_root).as_posix()
@@ -129,7 +129,7 @@ class DefaultCollector(CollectorPort):
                 CollectedFile(
                     abs_path=path,
                     relative_path=relative_path,
-                    language=extension,
+                    extension=extension,
                 )
             )
         return files, sorted(skipped, key=lambda item: item.relative_path)
@@ -157,9 +157,7 @@ class DefaultCollector(CollectorPort):
                 if reason is None:
                     kept_dirs.append(dirname)
                 else:
-                    skipped.append(
-                        SkippedFile(path, path.relative_to(repo_root).as_posix(), reason)
-                    )
+                    skipped.append(SkippedFile(path.relative_to(repo_root).as_posix(), reason))
             dirnames[:] = kept_dirs
 
             for filename in filenames:

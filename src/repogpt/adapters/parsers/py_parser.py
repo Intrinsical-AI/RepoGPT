@@ -86,7 +86,6 @@ class PythonParser(ParserPort):
                 "blank_lines": count_blank_lines(content),
                 "non_empty_lines": sum(bool(line.strip()) for line in lines),
             },
-            attributes={"relative_path": relative_path},
         )
 
         self._visit_sequence(
@@ -96,7 +95,7 @@ class PythonParser(ParserPort):
             source_lines=lines,
             decorator_origins=decorator_origins,
         )
-        self._associate_comments(root, extract_comments(content, language="python"))
+        self._associate_comments(root, extract_comments(content, extension="py"))
         return root
 
     def _visit_sequence(
@@ -201,7 +200,6 @@ class PythonParser(ParserPort):
             "import_kind": import_kind,
             "is_relative": bool(import_level),
             "import_level": import_level,
-            "imported_names": imported_names,
         }
         return new_node(
             type_="import",

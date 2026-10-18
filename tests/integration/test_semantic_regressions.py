@@ -71,11 +71,10 @@ def test_python_control_flow_preserves_symbols_imports_and_scopes(tmp_path: Path
     ]
     root = result.parsed_files[0].root
     assert root is not None
-    assert [
-        node.attributes["imported_names"][0]["name"]
-        for node in iter_nodes(root)
-        if node.type == "import"
-    ] == ["fast", "slow"]
+    assert [node.dependencies[0]["name"] for node in iter_nodes(root) if node.type == "import"] == [
+        "fast",
+        "slow",
+    ]
 
 
 def test_duplicate_python_declarations_survive_retrieval(tmp_path: Path) -> None:
@@ -113,7 +112,7 @@ def f(x): return x
     comparison = compare_profiles(docs, query_text="value", top_k=len(docs))
     names_by_id = {doc["external_id"]: doc["qualified_name"] for doc in docs}
     assert {
-        names_by_id[external_id] for external_id in comparison["structured_rag_v2"]["external_ids"]
+        names_by_id[external_id] for external_id in comparison["structured_rag_v3"]["external_ids"]
     } == {
         "Demo",
         "Demo.value",
@@ -232,7 +231,7 @@ def test_markdown_links_on_same_line_have_distinct_ids(tmp_path: Path) -> None:
     assert root is not None
     links = root.children
     assert len({link.id for link in links}) == 2
-    assert [link.attributes["start_column"] for link in links] == [0, 28]
+    assert [link.start_column for link in links] == [0, 28]
 
 
 def test_relative_import_level_is_preserved(tmp_path: Path) -> None:

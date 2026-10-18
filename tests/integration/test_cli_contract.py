@@ -122,14 +122,14 @@ def test_cli_ndjson_stream_contains_nodes_failures_and_summary() -> None:
     assert "node" in record_types
     assert "failure" in record_types
     assert record_types[-1] == "summary"
-    assert all(record["schema_version"] == "2" for record in records)
+    assert all(record["schema_version"] == "3" for record in records)
 
 
 def test_cli_json_envelope_is_stable() -> None:
     proc = _run(["--stdout", "--format", "json", "--flatten", "node", "--include-tests"])
     assert proc.returncode == 2
     payload = json.loads(proc.stdout)
-    assert payload["schema_version"] == "2"
+    assert payload["schema_version"] == "3"
     assert payload["repo_root"] == DATA_ROOT.resolve().as_posix()
     assert set(payload.keys()) == {
         "schema_version",
@@ -169,7 +169,7 @@ def test_cli_code_units_matches_golden_fixture() -> None:
     )
     assert proc.returncode == 2
     payload = _normalize_code_units_payload(json.loads(proc.stdout))
-    assert payload["schema_version"] == "5"
+    assert payload["schema_version"] == "6"
     expected = json.loads((GOLDEN_ROOT / "cli_fixture_code_units.json").read_text(encoding="utf-8"))
     assert payload == expected
 
@@ -183,7 +183,7 @@ def test_cli_code_units_documents_are_consumable_without_metadata() -> None:
     payload = json.loads(proc.stdout)
     document = payload["documents"][0]
 
-    assert payload["schema_version"] == "5"
+    assert payload["schema_version"] == "6"
     assert payload["replace_scope"] is False
     assert {
         "external_id",
@@ -209,7 +209,7 @@ def test_cli_code_units_documents_are_consumable_without_metadata() -> None:
         "has_children",
         "metadata",
     }.issubset(document.keys())
-    assert set(document["metadata"]) == {"file", "tags", "attributes", "dependencies"}
+    assert set(document["metadata"]) == {"file", "tags", "attributes"}
     assert document["metadata"].keys().isdisjoint(document)
 
 

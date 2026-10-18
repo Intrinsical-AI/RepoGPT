@@ -1,0 +1,761 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://repogpt.local/schemas/ast-v3.schema.json",
+  "title": "RepoGPT AST v3",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/envelope"
+    },
+    {
+      "$ref": "#/$defs/nodeRecord"
+    },
+    {
+      "$ref": "#/$defs/failureRecord"
+    },
+    {
+      "$ref": "#/$defs/summaryRecord"
+    }
+  ],
+  "$defs": {
+    "emptyObject": {
+      "type": "object",
+      "required": [],
+      "properties": {},
+      "additionalProperties": false
+    },
+    "fileDigest": {
+      "type": "object",
+      "required": [
+        "size",
+        "sha256"
+      ],
+      "properties": {
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "comment": {
+      "type": "object",
+      "required": [
+        "text",
+        "line"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "importDependency": {
+      "type": "object",
+      "required": [
+        "name",
+        "asname"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "asname": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "parameter": {
+      "type": "object",
+      "required": [
+        "name",
+        "kind",
+        "annotation",
+        "default"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "positional_only",
+            "positional",
+            "vararg",
+            "keyword_only",
+            "kwarg"
+          ]
+        },
+        "annotation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "default": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "importAttributes": {
+      "type": "object",
+      "required": [
+        "module",
+        "import_kind",
+        "is_relative",
+        "import_level"
+      ],
+      "properties": {
+        "module": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "import_kind": {
+          "enum": [
+            "import",
+            "from"
+          ]
+        },
+        "is_relative": {
+          "type": "boolean"
+        },
+        "import_level": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "classAttributes": {
+      "type": "object",
+      "required": [
+        "bases",
+        "decorators"
+      ],
+      "properties": {
+        "bases": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "decorators": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "callableAttributes": {
+      "type": "object",
+      "required": [
+        "is_async",
+        "decorators",
+        "params",
+        "returns",
+        "visibility",
+        "signature"
+      ],
+      "properties": {
+        "is_async": {
+          "type": "boolean"
+        },
+        "decorators": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "params": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/parameter"
+          }
+        },
+        "returns": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "visibility": {
+          "enum": [
+            "public",
+            "protected",
+            "private"
+          ]
+        },
+        "signature": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "headingAttributes": {
+      "type": "object",
+      "required": [
+        "level"
+      ],
+      "properties": {
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6
+        }
+      },
+      "additionalProperties": false
+    },
+    "codeBlockAttributes": {
+      "type": "object",
+      "required": [
+        "fence_language"
+      ],
+      "properties": {
+        "fence_language": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "is_unclosed": {
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "linkAttributes": {
+      "type": "object",
+      "required": [
+        "url"
+      ],
+      "properties": {
+        "url": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pythonModuleMetrics": {
+      "type": "object",
+      "required": [
+        "blank_lines",
+        "non_empty_lines"
+      ],
+      "properties": {
+        "blank_lines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "non_empty_lines": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "markdownModuleMetrics": {
+      "type": "object",
+      "required": [
+        "blank_lines",
+        "non_empty_lines",
+        "heading_count",
+        "code_block_count",
+        "link_count"
+      ],
+      "properties": {
+        "blank_lines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "non_empty_lines": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "heading_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "code_block_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "link_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "stats": {
+      "type": "object",
+      "required": [
+        "total_files",
+        "ok_files",
+        "failed_files",
+        "emitted_records"
+      ],
+      "properties": {
+        "total_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ok_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "emitted_records": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "nodeFields": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "name",
+        "language",
+        "path",
+        "start_line",
+        "start_column",
+        "end_line",
+        "docstring",
+        "comments",
+        "tags",
+        "dependencies",
+        "parent_id",
+        "attributes",
+        "metrics"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "type": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "language": {
+          "enum": [
+            "py",
+            "md"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "start_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "start_column": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "docstring": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "comments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/comment"
+          }
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dependencies": {
+          "type": "array"
+        },
+        "parent_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nodeChild"
+          }
+        },
+        "attributes": {
+          "type": "object"
+        },
+        "metrics": {
+          "type": "object"
+        }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "type": {
+                  "const": "module"
+                },
+                "language": {
+                  "const": "py"
+                },
+                "attributes": {
+                  "$ref": "#/$defs/emptyObject"
+                },
+                "metrics": {
+                  "$ref": "#/$defs/pythonModuleMetrics"
+                },
+                "dependencies": {
+                  "type": "array",
+                  "maxItems": 0
+                }
+              }
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "module"
+                },
+                "language": {
+                  "const": "md"
+                },
+                "attributes": {
+                  "$ref": "#/$defs/emptyObject"
+                },
+                "metrics": {
+                  "$ref": "#/$defs/markdownModuleMetrics"
+                },
+                "dependencies": {
+                  "type": "array",
+                  "maxItems": 0
+                }
+              }
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "import"
+                },
+                "language": {
+                  "const": "py"
+                },
+                "attributes": {
+                  "$ref": "#/$defs/importAttributes"
+                },
+                "metrics": {
+                  "$ref": "#/$defs/emptyObject"
+                },
+                "dependencies": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/importDependency"
+                  }
+                }
+              }
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "class"
+                },
+                "language": {
+                  "const": "py"
+                },
+                "attributes": {
+                  "$ref": "#/$defs/classAttributes"
+                },
+                "metrics": {
+                  "$ref": "#/$defs/emptyObject"
+                },
+                "dependencies": {
+                  "type": "array",
+                  "maxItems": 0
+                }
+              }
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "function"
+                },
+                "language": {
+                  "const": "py"
+                },
+                "attributes": {
+                  "$ref": "#/$defs/callableAttributes"
+                },
+                "metrics": {
+                  "$ref": "#/$defs/emptyObject"
+                },
+                "dependencies": {
+                  "type": "array",
+                  "maxItems": 0
+                }
+              }
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "method"
+                },
+                "language": {
+                  "const": "py"
+                },
+                "attributes": {
+                  "$ref": "#/$defs/callableAttributes"
+                },
+                "metrics": {
+                  "$ref": "#/$defs/emptyObject"
+                },
+                "dependencies": {
+                  "type": "array",
+                  "maxItems": 0
+                }
+              }
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "heading"
+                },
+                "language": {
+                  "const": "md"
+                },
+                "attributes": {
+                  "$ref": "#/$defs/headingAttributes"
+                },
+                "metrics": {
+                  "$ref": "#/$defs/emptyObject"
+                },
+                "dependencies": {
+                  "type": "array",
+                  "maxItems": 0
+                }
+              }
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "code_block"
+                },
+                "language": {
+                  "const": "md"
+                },
+                "attributes": {
+                  "$ref": "#/$defs/codeBlockAttributes"
+                },
+                "metrics": {
+                  "$ref": "#/$defs/emptyObject"
+                },
+                "dependencies": {
+                  "type": "array",
+                  "maxItems": 0
+                }
+              }
+            },
+            {
+              "properties": {
+                "type": {
+                  "const": "link"
+                },
+                "language": {
+                  "const": "md"
+                },
+                "attributes": {
+                  "$ref": "#/$defs/linkAttributes"
+                },
+                "metrics": {
+                  "$ref": "#/$defs/emptyObject"
+                },
+                "dependencies": {
+                  "type": "array",
+                  "maxItems": 0
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "nodeChild": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/nodeFields"
+        }
+      ],
+      "required": [
+        "children"
+      ],
+      "unevaluatedProperties": false
+    },
+    "nodeRecord": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/nodeFields"
+        },
+        {
+          "type": "object",
+          "required": [
+            "record_type",
+            "schema_version",
+            "file"
+          ],
+          "properties": {
+            "record_type": {
+              "const": "node"
+            },
+            "schema_version": {
+              "const": "3"
+            },
+            "file": {
+              "$ref": "#/$defs/fileDigest"
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "failureRecord": {
+      "type": "object",
+      "required": [
+        "record_type",
+        "schema_version",
+        "path",
+        "language",
+        "error",
+        "file"
+      ],
+      "properties": {
+        "record_type": {
+          "const": "failure"
+        },
+        "schema_version": {
+          "const": "3"
+        },
+        "path": {
+          "type": "string"
+        },
+        "language": {
+          "enum": [
+            "py",
+            "md"
+          ]
+        },
+        "error": {
+          "type": "string"
+        },
+        "file": {
+          "$ref": "#/$defs/fileDigest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "summaryRecord": {
+      "type": "object",
+      "required": [
+        "record_type",
+        "schema_version",
+        "repo_root",
+        "stats"
+      ],
+      "properties": {
+        "record_type": {
+          "const": "summary"
+        },
+        "schema_version": {
+          "const": "3"
+        },
+        "repo_root": {
+          "type": "string"
+        },
+        "stats": {
+          "$ref": "#/$defs/stats"
+        }
+      },
+      "additionalProperties": false
+    },
+    "envelope": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "repo_root",
+        "stats",
+        "failures",
+        "records"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "3"
+        },
+        "repo_root": {
+          "type": "string"
+        },
+        "stats": {
+          "$ref": "#/$defs/stats"
+        },
+        "failures": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/failureRecord"
+          }
+        },
+        "records": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nodeRecord"
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

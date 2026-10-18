@@ -18,7 +18,7 @@ def _loaded_file(filename: str) -> LoadedFile:
     path = DATA_DIR / filename
     raw = path.read_bytes()
     return LoadedFile(
-        collected_file=CollectedFile(abs_path=path, relative_path=filename, language="py"),
+        collected_file=CollectedFile(abs_path=path, relative_path=filename, extension="py"),
         text=raw.decode("utf-8", errors="replace"),
         digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
     )
@@ -33,7 +33,7 @@ def _parse_text(tmp_path: Path, filename: str, content: str) -> CodeNode:
     raw = content.encode("utf-8")
     return PythonParser().parse(
         LoadedFile(
-            collected_file=CollectedFile(abs_path=path, relative_path=filename, language="py"),
+            collected_file=CollectedFile(abs_path=path, relative_path=filename, extension="py"),
             text=content,
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
         )
@@ -94,7 +94,7 @@ def test_python_import_and_signature_semantics(tmp_path: Path) -> None:
             collected_file=CollectedFile(
                 abs_path=fixture,
                 relative_path="tmp_imports.py",
-                language="py",
+                extension="py",
             ),
             text=content,
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
@@ -105,7 +105,7 @@ def test_python_import_and_signature_semantics(tmp_path: Path) -> None:
     function = next(child for child in root.children if child.type == "function")
 
     assert imports[0].attributes["import_kind"] == "import"
-    assert imports[0].attributes["imported_names"] == [{"name": "os", "asname": "operating_system"}]
+    assert imports[0].dependencies == [{"name": "os", "asname": "operating_system"}]
     assert imports[1].attributes["module"] == "pkg.sub"
     assert imports[1].attributes["is_relative"] is False
     assert function.attributes["is_async"] is True
@@ -139,6 +139,14 @@ def test_python_method_visibility_respects_special_names(
     method = root.children[0].children[0]
     assert method.type == "method"
     assert method.attributes["visibility"] == visibility
+
+
+def test_python_nodes_keep_one_path_and_import_name_representation(tmp_path: Path) -> None:
+    root = _parse_text(tmp_path, "imports.py", "import os as operating_system\n")
+
+    assert root.attributes == {}
+    assert root.children[0].dependencies == [{"name": "os", "asname": "operating_system"}]
+    assert "imported_names" not in root.children[0].attributes
 
 
 def test_python_ids_are_deterministic() -> None:
@@ -242,7 +250,7 @@ def test_python_signature_with_vararg_and_keyword_only_is_valid(tmp_path: Path) 
             collected_file=CollectedFile(
                 abs_path=fixture,
                 relative_path="tmp_signature.py",
-                language="py",
+                extension="py",
             ),
             text=content,
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
@@ -275,7 +283,7 @@ def test_python_module_end_line_handles_trailing_newline(tmp_path: Path) -> None
             collected_file=CollectedFile(
                 abs_path=fixture,
                 relative_path="trailing.py",
-                language="py",
+                extension="py",
             ),
             text=content,
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),

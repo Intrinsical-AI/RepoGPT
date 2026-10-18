@@ -302,12 +302,7 @@ class MarkdownParser(ParserPort):
                     language="md",
                     end_line=line_number,
                     parent_id=parent.id,
-                    attributes={
-                        "text": text,
-                        "url": url,
-                        "start_column": start_column,
-                    },
-                    dependencies=[{"text": text, "url": url}],
+                    attributes={"url": url},
                 )
                 parent.children.append(link_node)
                 link_count += 1
@@ -369,7 +364,6 @@ class MarkdownParser(ParserPort):
                 "blank_lines": count_blank_lines(content),
                 "non_empty_lines": len([line for line in lines if line.strip()]),
             },
-            attributes={"relative_path": relative_path},
         )
 
         heading_stack: list[CodeNode] = []
@@ -508,7 +502,7 @@ class MarkdownParser(ParserPort):
         root.metrics["link_count"] = link_count
 
         comments = extract_comments(
-            self._mask_code_lines(content, code_lines, inline_lines), language="markdown"
+            self._mask_code_lines(content, code_lines, inline_lines), extension="md"
         )
         root.comments.extend(comments)
         dedup_tags: list[str] = []

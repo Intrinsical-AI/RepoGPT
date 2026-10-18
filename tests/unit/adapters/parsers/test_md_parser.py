@@ -18,7 +18,7 @@ def _loaded_file(filename: str) -> LoadedFile:
     path = DATA_DIR / filename
     raw = path.read_bytes()
     return LoadedFile(
-        collected_file=CollectedFile(abs_path=path, relative_path=filename, language="md"),
+        collected_file=CollectedFile(abs_path=path, relative_path=filename, extension="md"),
         text=raw.decode("utf-8", errors="replace"),
         digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
     )
@@ -71,7 +71,7 @@ def test_markdown_extracts_links_and_counts() -> None:
     nodes = flatten_tree(root)
     link = next(node for node in nodes if node["type"] == "link")
 
-    assert link["attributes"]["text"] == "OpenAI"
+    assert link["name"] == "OpenAI"
     assert link["attributes"]["url"] == "https://openai.com"
     assert root.metrics["link_count"] == 1
     assert any("🎉" in comment["text"] for comment in root.comments)
@@ -148,8 +148,8 @@ def test_inline_links_separate_titles_and_balance_delimiters(
     links = [node for node in flatten_tree(root) if node["type"] == "link"]
 
     assert [(node["name"], node["attributes"]["url"]) for node in links] == [(text, url)]
-    assert links[0]["attributes"]["text"] == text
-    assert links[0]["dependencies"] == [{"text": text, "url": url}]
+    assert links[0]["attributes"] == {"url": url}
+    assert links[0]["dependencies"] == []
     assert root.metrics["link_count"] == 1
 
 
@@ -193,8 +193,18 @@ def test_multiple_inline_links_keep_original_unicode_columns(tmp_path: Path) -> 
     ]
     columns = [source.index("[a"), source.index("[next]")]
     assert [node["start_column"] for node in links] == columns
-    assert [node["attributes"]["start_column"] for node in links] == columns
     assert root.metrics["link_count"] == 2
+
+
+def test_markdown_nodes_keep_one_link_and_path_representation(tmp_path: Path) -> None:
+    root = _parse_text(tmp_path, "[Docs](https://example.com)\n")
+    link = root.children[0]
+
+    assert root.attributes == {}
+    assert link.name == "Docs"
+    assert link.start_column == 0
+    assert link.attributes == {"url": "https://example.com"}
+    assert link.dependencies == []
 
 
 @pytest.mark.parametrize("depth,expected_count", [(32, 1), (33, 0)])
@@ -267,7 +277,7 @@ def test_markdown_unclosed_code_block_extends_to_eof(tmp_path: Path) -> None:
             collected_file=CollectedFile(
                 abs_path=fixture,
                 relative_path="unclosed.md",
-                language="md",
+                extension="md",
             ),
             text=content,
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
@@ -296,7 +306,7 @@ def test_markdown_skips_headings_and_links_inside_code_fences(tmp_path: Path) ->
             collected_file=CollectedFile(
                 abs_path=fixture,
                 relative_path="fenced.md",
-                language="md",
+                extension="md",
             ),
             text=content,
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
@@ -318,7 +328,9 @@ def test_markdown_tilde_fence_is_recognized_as_code_block(tmp_path: Path) -> Non
 
     root = MarkdownParser().parse(
         LoadedFile(
-            collected_file=CollectedFile(abs_path=fixture, relative_path="tilde.md", language="md"),
+            collected_file=CollectedFile(
+                abs_path=fixture, relative_path="tilde.md", extension="md"
+            ),
             text=content,
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
         )
@@ -340,7 +352,9 @@ def test_markdown_tilde_fence_not_closed_by_backtick_fence(tmp_path: Path) -> No
 
     root = MarkdownParser().parse(
         LoadedFile(
-            collected_file=CollectedFile(abs_path=fixture, relative_path="mixed.md", language="md"),
+            collected_file=CollectedFile(
+                abs_path=fixture, relative_path="mixed.md", extension="md"
+            ),
             text=content,
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
         )
@@ -361,7 +375,7 @@ def test_markdown_fence_info_string_with_space_uses_first_token(tmp_path: Path) 
 
     root = MarkdownParser().parse(
         LoadedFile(
-            collected_file=CollectedFile(abs_path=fixture, relative_path="info.md", language="md"),
+            collected_file=CollectedFile(abs_path=fixture, relative_path="info.md", extension="md"),
             text=content,
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
         )
@@ -422,7 +436,7 @@ def test_markdown_links_respect_indented_code_and_prose(
     assert root.metrics["link_count"] == len(expected)
     for node in links:
         line = content.splitlines()[node["start_line"] - 1]
-        assert line[node["attributes"]["start_column"]] == "["
+        assert line[node["start_column"]] == "["
 
 
 @pytest.mark.parametrize(

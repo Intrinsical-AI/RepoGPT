@@ -5,7 +5,12 @@ import json
 from pathlib import Path
 
 from repogpt.utils.retrieval_artifact import load_documents
-from repogpt.utils.retrieval_profiles import compare_profiles, validate_top_k
+from repogpt.utils.retrieval_profiles import (
+    FLAT_PROFILE,
+    STRUCTURED_PROFILE,
+    compare_profiles,
+    validate_top_k,
+)
 
 
 def _non_negative_int(value: str) -> int:
@@ -16,7 +21,7 @@ def _non_negative_int(value: str) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Compare flat_rag_v2 and structured_rag_v2 on a code-units artifact.",
+        description=f"Compare {FLAT_PROFILE} and {STRUCTURED_PROFILE} on a code-units artifact.",
     )
     parser.add_argument("artifact", help="Path to a code-units JSON artifact")
     parser.add_argument("query", help="Query text to evaluate")

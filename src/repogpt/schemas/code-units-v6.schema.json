@@ -1,0 +1,596 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://repogpt.local/schemas/code-units-v6.schema.json",
+  "title": "RepoGPT Code Units v6",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "kind",
+    "repo_key",
+    "snapshot_id",
+    "scope",
+    "replace_scope",
+    "stats",
+    "failures",
+    "documents"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "6"
+    },
+    "kind": {
+      "const": "code-units"
+    },
+    "repo_key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "snapshot_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scope": {
+      "type": "string",
+      "minLength": 1
+    },
+    "replace_scope": {
+      "type": "boolean"
+    },
+    "stats": {
+      "$ref": "#/$defs/stats"
+    },
+    "failures": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/failureRecord"
+      }
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/document"
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "emptyObject": {
+      "type": "object",
+      "required": [],
+      "properties": {},
+      "additionalProperties": false
+    },
+    "fileDigest": {
+      "type": "object",
+      "required": [
+        "size",
+        "sha256"
+      ],
+      "properties": {
+        "size": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "parameter": {
+      "type": "object",
+      "required": [
+        "name",
+        "kind",
+        "annotation",
+        "default"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "positional_only",
+            "positional",
+            "vararg",
+            "keyword_only",
+            "kwarg"
+          ]
+        },
+        "annotation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "default": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "classAttributes": {
+      "type": "object",
+      "required": [
+        "bases",
+        "decorators"
+      ],
+      "properties": {
+        "bases": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "decorators": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "callableAttributes": {
+      "type": "object",
+      "required": [
+        "is_async",
+        "decorators",
+        "params",
+        "returns",
+        "visibility",
+        "signature"
+      ],
+      "properties": {
+        "is_async": {
+          "type": "boolean"
+        },
+        "decorators": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "params": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/parameter"
+          }
+        },
+        "returns": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "visibility": {
+          "enum": [
+            "public",
+            "protected",
+            "private"
+          ]
+        },
+        "signature": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "headingAttributes": {
+      "type": "object",
+      "required": [
+        "level"
+      ],
+      "properties": {
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6
+        }
+      },
+      "additionalProperties": false
+    },
+    "codeBlockAttributes": {
+      "type": "object",
+      "required": [
+        "fence_language"
+      ],
+      "properties": {
+        "fence_language": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "is_unclosed": {
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "stats": {
+      "type": "object",
+      "required": [
+        "total_files",
+        "ok_files",
+        "failed_files",
+        "emitted_documents"
+      ],
+      "properties": {
+        "total_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ok_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed_files": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "emitted_documents": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "contentRange": {
+      "type": "object",
+      "required": [
+        "start_line",
+        "end_line"
+      ],
+      "properties": {
+        "start_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "metadata": {
+      "type": "object",
+      "required": [
+        "file",
+        "tags",
+        "attributes"
+      ],
+      "properties": {
+        "file": {
+          "$ref": "#/$defs/fileDigest"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "attributes": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "failureRecord": {
+      "type": "object",
+      "required": [
+        "record_type",
+        "schema_version",
+        "path",
+        "language",
+        "error",
+        "file"
+      ],
+      "properties": {
+        "record_type": {
+          "const": "failure"
+        },
+        "schema_version": {
+          "const": "6"
+        },
+        "path": {
+          "type": "string"
+        },
+        "language": {
+          "enum": [
+            "py",
+            "md"
+          ]
+        },
+        "error": {
+          "type": "string"
+        },
+        "file": {
+          "$ref": "#/$defs/fileDigest"
+        }
+      },
+      "additionalProperties": false
+    },
+    "document": {
+      "type": "object",
+      "required": [
+        "external_id",
+        "source_id",
+        "repo_key",
+        "scope",
+        "snapshot_id",
+        "path",
+        "language",
+        "unit_type",
+        "unit_level",
+        "symbol",
+        "qualified_name",
+        "container_id",
+        "depth",
+        "ancestor_path",
+        "start_line",
+        "end_line",
+        "content",
+        "content_hash",
+        "docstring_present",
+        "has_children",
+        "metadata"
+      ],
+      "properties": {
+        "external_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "repo_key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "snapshot_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "language": {
+          "enum": [
+            "py",
+            "md"
+          ]
+        },
+        "unit_type": {
+          "type": "string"
+        },
+        "unit_level": {
+          "enum": [
+            "container",
+            "symbol"
+          ]
+        },
+        "symbol": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "qualified_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "container_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ancestor_path": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "start_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end_line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "content": {
+          "type": "string"
+        },
+        "content_ranges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/contentRange"
+          }
+        },
+        "content_hash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "docstring_present": {
+          "type": "boolean"
+        },
+        "has_children": {
+          "type": "boolean"
+        },
+        "metadata": {
+          "$ref": "#/$defs/metadata"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "properties": {
+                "unit_type": {
+                  "const": "module"
+                },
+                "language": {
+                  "const": "py"
+                },
+                "metadata": {
+                  "properties": {
+                    "attributes": {
+                      "$ref": "#/$defs/emptyObject"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "properties": {
+                "unit_type": {
+                  "const": "module"
+                },
+                "language": {
+                  "const": "md"
+                },
+                "metadata": {
+                  "properties": {
+                    "attributes": {
+                      "$ref": "#/$defs/emptyObject"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "properties": {
+                "unit_type": {
+                  "const": "class"
+                },
+                "language": {
+                  "const": "py"
+                },
+                "metadata": {
+                  "properties": {
+                    "attributes": {
+                      "$ref": "#/$defs/classAttributes"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "properties": {
+                "unit_type": {
+                  "const": "function"
+                },
+                "language": {
+                  "const": "py"
+                },
+                "metadata": {
+                  "properties": {
+                    "attributes": {
+                      "$ref": "#/$defs/callableAttributes"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "properties": {
+                "unit_type": {
+                  "const": "method"
+                },
+                "language": {
+                  "const": "py"
+                },
+                "metadata": {
+                  "properties": {
+                    "attributes": {
+                      "$ref": "#/$defs/callableAttributes"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "properties": {
+                "unit_type": {
+                  "const": "heading"
+                },
+                "language": {
+                  "const": "md"
+                },
+                "metadata": {
+                  "properties": {
+                    "attributes": {
+                      "$ref": "#/$defs/headingAttributes"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "properties": {
+                "unit_type": {
+                  "const": "code_block"
+                },
+                "language": {
+                  "const": "md"
+                },
+                "metadata": {
+                  "properties": {
+                    "attributes": {
+                      "$ref": "#/$defs/codeBlockAttributes"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "if": {
+        "properties": {
+          "unit_type": {
+            "const": "module"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "content_ranges"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "content_ranges"
+          ]
+        }
+      }
+    }
+  }
+}

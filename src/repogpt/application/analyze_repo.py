@@ -54,7 +54,7 @@ class AnalyzeRepo:
 
         for collected_file in collected_files:
             loaded_file = self.loader.load(collected_file)
-            parser = self.parser_registry.parser_for(loaded_file.language)
+            parser = self.parser_registry.parser_for(loaded_file.extension)
             if loaded_file.decode_error is not None:
                 parsed_file = ParsedFile(
                     loaded_file=loaded_file,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from copy import deepcopy
 from importlib.resources import files
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -12,6 +13,7 @@ from jsonschema import Draft202012Validator, ValidationError
 
 from repogpt.domain.analysis import AnalysisRequest, AstProjection
 from repogpt.runtime import build_analyze_repo
+from repogpt.utils.tree_utils import iter_nodes
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 GOLDEN_ROOT = REPO_ROOT / "tests" / "golden"
@@ -29,12 +31,12 @@ def _validator(schema_name: str) -> Draft202012Validator:
 
 
 def test_ast_json_golden_matches_public_schema() -> None:
-    validator = _validator("ast-v2.schema.json")
+    validator = _validator("ast-v3.schema.json")
     validator.validate(_load_json(GOLDEN_ROOT / "cli_fixture_json.json"))
 
 
 def test_ast_ndjson_golden_records_match_public_schema() -> None:
-    validator = _validator("ast-v2.schema.json")
+    validator = _validator("ast-v3.schema.json")
     records = [
         json.loads(line)
         for line in (GOLDEN_ROOT / "cli_fixture_ndjson.ndjson")
@@ -48,17 +50,17 @@ def test_ast_ndjson_golden_records_match_public_schema() -> None:
 
 
 def test_code_units_json_golden_matches_public_schema() -> None:
-    validator = _validator("code-units-v5.schema.json")
+    validator = _validator("code-units-v6.schema.json")
     validator.validate(_load_json(GOLDEN_ROOT / "cli_fixture_code_units.json"))
 
 
-def test_code_units_v5_requires_module_only_content_ranges(tmp_path: Path) -> None:
+def test_code_units_v6_requires_module_only_content_ranges(tmp_path: Path) -> None:
     (tmp_path / "sample.py").write_text("CONSTANT = 3\ndef f():\n    pass\n", encoding="utf-8")
     _, projection = build_analyze_repo().run(
         AnalysisRequest(repo_root=tmp_path, projection="code_units", repo_key="schema-test")
     )
     payload = projection.json_payload
-    validator = _validator("code-units-v5.schema.json")
+    validator = _validator("code-units-v6.schema.json")
     validator.validate(payload)
 
     without_ranges = json.loads(json.dumps(payload))
@@ -79,8 +81,8 @@ def test_cli_multiline_decorators_validate_and_stay_with_the_callable(
     declaration = decorator + "async def f():\n    pass\n"
     (tmp_path / "sample.py").write_text("VALUE = 1\n" + declaration, encoding="utf-8")
     for projection, schema in [
-        ("ast", "ast-v2.schema.json"),
-        ("code-units", "code-units-v5.schema.json"),
+        ("ast", "ast-v3.schema.json"),
+        ("code-units", "code-units-v6.schema.json"),
     ]:
         process = subprocess.run(
             [
@@ -152,7 +154,7 @@ def test_fresh_semantic_regressions_match_public_schemas(
         )
     )
     assert result.stats.failed_files == 0
-    schema = "code-units-v5.schema.json" if projection == "code_units" else "ast-v2.schema.json"
+    schema = "code-units-v6.schema.json" if projection == "code_units" else "ast-v3.schema.json"
     validator = _validator(schema)
     if format == "ndjson":
         assert isinstance(artifact, AstProjection)
@@ -171,4 +173,155 @@ def test_ast_schema_rejects_malformed_nested_nodes(depth: int, child: object) ->
         node = node["children"][0]
     node["children"] = [child]
     with pytest.raises(ValidationError):
-        _validator("ast-v2.schema.json").validate(payload)
+        _validator("ast-v3.schema.json").validate(payload)
+
+
+@pytest.fixture
+def supported_parser_repo(tmp_path: Path) -> Path:
+    (tmp_path / "sample.py").write_text(
+        '"""Module documentation."""\n'
+        "# Module comment\n"
+        "import os as operating_system\n"
+        "from ..package import item\n"
+        "@decorator\n"
+        "class C(Base):\n"
+        "    def method(self, value: int = 1, /, extra='x', *args, flag=True, **kwargs) -> int:\n"
+        '        """Method documentation."""\n'
+        "        return value\n"
+        "async def helper(): pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "sample.md").write_text(
+        "Preamble\n<!-- TODO: document -->\n# Heading\n[Docs](u)\n"
+        "```python\nprint('ok')\n```\n## Child\n~~~\nunclosed\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "broken.py").write_text("def broken(:\n", encoding="utf-8")
+    return tmp_path
+
+
+def _object_paths(value: Any, path: tuple[str | int, ...] = ()) -> list[tuple[str | int, ...]]:
+    paths: list[tuple[str | int, ...]] = []
+    if isinstance(value, dict):
+        paths.append(path)
+        for key, child in value.items():
+            paths.extend(_object_paths(child, (*path, key)))
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            paths.extend(_object_paths(child, (*path, index)))
+    return paths
+
+
+@pytest.mark.parametrize(
+    "projection,format,flatten",
+    [
+        ("ast", "json", "file"),
+        ("ast", "json", "node"),
+        ("ast", "ndjson", "file"),
+        ("ast", "ndjson", "node"),
+        ("code_units", "json", "node"),
+    ],
+)
+def test_supported_exports_reject_extra_fields_at_every_object(
+    supported_parser_repo: Path,
+    projection: Literal["ast", "code_units"],
+    format: Literal["json", "ndjson"],
+    flatten: Literal["node", "file"],
+) -> None:
+    result, artifact = build_analyze_repo().run(
+        AnalysisRequest(
+            repo_root=supported_parser_repo,
+            projection=projection,
+            format=format,
+            flatten_kind=flatten,
+            repo_key="schema-test" if projection == "code_units" else None,
+        )
+    )
+    assert result.stats.ok_files == 2
+    assert result.stats.failed_files == 1
+    assert {
+        node.type
+        for parsed_file in result.parsed_files
+        if parsed_file.root is not None
+        for node in iter_nodes(parsed_file.root)
+    } == {"module", "import", "class", "method", "function", "heading", "link", "code_block"}
+    schema = "code-units-v6.schema.json" if projection == "code_units" else "ast-v3.schema.json"
+    validator = _validator(schema)
+    if format == "ndjson":
+        assert isinstance(artifact, AstProjection)
+        payloads = list(artifact.ndjson_records)
+        assert {record["record_type"] for record in payloads} == {"node", "failure", "summary"}
+    else:
+        payloads = [artifact.json_payload]
+    for payload in payloads:
+        validator.validate(payload)
+        for path in _object_paths(payload):
+            modified = deepcopy(payload)
+            target: Any = modified
+            for key in path:
+                target = target[key]
+            target["unexpected_field"] = True
+            assert not validator.is_valid(modified), f"Unknown field accepted at {path}"
+
+
+@pytest.mark.parametrize("field", ["path", "signature"])
+def test_ast_schema_rejects_required_field_renames(supported_parser_repo: Path, field: str) -> None:
+    _, artifact = build_analyze_repo().run(AnalysisRequest(repo_root=supported_parser_repo))
+    payload = deepcopy(artifact.json_payload)
+    function = next(node for node in payload["records"] if node["type"] == "function")
+    target = function if field == "path" else function["attributes"]
+    target[f"renamed_{field}"] = target.pop(field)
+
+    with pytest.raises(ValidationError):
+        _validator("ast-v3.schema.json").validate(payload)
+
+
+def test_ast_schema_rejects_unknown_node_types(supported_parser_repo: Path) -> None:
+    _, artifact = build_analyze_repo().run(AnalysisRequest(repo_root=supported_parser_repo))
+    payload = deepcopy(artifact.json_payload)
+    payload["records"][0]["type"] = "unsupported-parser-node"
+
+    with pytest.raises(ValidationError):
+        _validator("ast-v3.schema.json").validate(payload)
+
+
+def test_code_units_metadata_does_not_repeat_empty_dependencies(
+    supported_parser_repo: Path,
+) -> None:
+    _, artifact = build_analyze_repo().run(
+        AnalysisRequest(repo_root=supported_parser_repo, projection="code_units")
+    )
+
+    assert all(
+        "dependencies" not in document["metadata"]
+        for document in artifact.json_payload["documents"]
+    )
+
+
+@pytest.mark.parametrize("field", ["path", "signature"])
+def test_code_units_schema_rejects_required_field_renames(
+    supported_parser_repo: Path, field: str
+) -> None:
+    _, artifact = build_analyze_repo().run(
+        AnalysisRequest(repo_root=supported_parser_repo, projection="code_units")
+    )
+    payload = deepcopy(artifact.json_payload)
+    function = next(
+        document for document in payload["documents"] if document["unit_type"] == "function"
+    )
+    target = function if field == "path" else function["metadata"]["attributes"]
+    target[f"renamed_{field}"] = target.pop(field)
+
+    with pytest.raises(ValidationError):
+        _validator("code-units-v6.schema.json").validate(payload)
+
+
+def test_code_units_schema_rejects_unknown_unit_types(supported_parser_repo: Path) -> None:
+    _, artifact = build_analyze_repo().run(
+        AnalysisRequest(repo_root=supported_parser_repo, projection="code_units")
+    )
+    payload = deepcopy(artifact.json_payload)
+    payload["documents"][0]["unit_type"] = "unsupported-parser-node"
+
+    with pytest.raises(ValidationError):
+        _validator("code-units-v6.schema.json").validate(payload)

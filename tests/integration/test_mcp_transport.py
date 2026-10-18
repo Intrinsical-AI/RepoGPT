@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -86,7 +87,7 @@ def test_stdio_initialization_notifications_and_recovery(tmp_path: Path) -> None
                     "id": 1,
                     "method": "initialize",
                     "params": {
-                        "protocolVersion": "2024-11-05",
+                        "protocolVersion": "2025-06-18",
                         "capabilities": {},
                         "clientInfo": {"name": "test", "version": "1"},
                     },
@@ -103,9 +104,11 @@ def test_stdio_initialization_notifications_and_recovery(tmp_path: Path) -> None
     responses = [json.loads(line) for line in run.stdout.splitlines()]
     assert run.returncode == 0
     assert [response["id"] for response in responses] == [1, None, 2]
+    assert responses[0]["result"]["protocolVersion"] == "2025-06-18"
     assert responses[1]["error"]["code"] == -32700
     assert responses[2]["result"]["isError"] is False
     payload = json.loads(responses[2]["result"]["content"][0]["text"])
+    assert responses[2]["result"]["structuredContent"] == payload
     assert [doc["unit_type"] for doc in payload["documents"]] == ["module", "function"]
 
 
@@ -185,11 +188,40 @@ def test_tool_execution_errors_preserve_stdio_session(tmp_path: Path, case: str)
     assert "error" not in failed
     assert failed["result"]["isError"] is True
     failure_payload = json.loads(failed["result"]["content"][0]["text"])
+    assert failed["result"]["structuredContent"] == failure_payload
     assert set(failure_payload) == {"error"}
     assert expected_error in failure_payload["error"]
     assert recovered["result"]["isError"] is False
     payload = json.loads(recovered["result"]["content"][0]["text"])
     assert {document["path"] for document in payload["documents"]} == {"sample.py"}
+
+
+def test_stdio_file_output_and_comparison_share_native_results(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "sample.py").write_text("def helper():\n    return '🙂'\n", encoding="utf-8")
+    artifact = tmp_path / "units.json"
+    run = _session(
+        [
+            _call({"repo_path": str(repo), "output_path": str(artifact)}),
+            _call(
+                {"artifact_path": str(artifact), "query": "helper", "top_k": 1},
+                req_id=3,
+                tool_name="repogpt_compare_profiles",
+            ),
+        ]
+    )
+    assert run.returncode == 0, run.stderr
+    responses = [json.loads(line) for line in run.stdout.splitlines()]
+    assert [response["id"] for response in responses] == [2, 3]
+    for response in responses:
+        result = response["result"]
+        assert result["isError"] is False
+        assert result["structuredContent"] == json.loads(result["content"][0]["text"])
+    receipt = responses[0]["result"]["structuredContent"]
+    assert receipt["sha256"] == hashlib.sha256(artifact.read_bytes()).hexdigest()
+    assert "documents" not in receipt
+    assert responses[1]["result"]["structuredContent"]["top_k"] == 1
 
 
 @pytest.mark.parametrize("invalid", ["false", 0, 1, None, [], {}])

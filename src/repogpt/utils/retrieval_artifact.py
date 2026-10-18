@@ -8,14 +8,14 @@ from repogpt.domain.code_units import KIND, SCHEMA_VERSION
 
 
 def load_documents(path: Path) -> list[dict[str, Any]]:
-    """Load code-units v5 inputs, rejecting malformed entries and duplicate identities."""
+    """Load current code-units inputs, rejecting malformed entries and duplicate identities."""
     payload = json.loads(path.read_text(encoding="utf-8"))
     if (
         not isinstance(payload, dict)
         or payload.get("schema_version") != SCHEMA_VERSION
         or payload.get("kind") != KIND
     ):
-        raise ValueError("expected a code-units v5 object")
+        raise ValueError(f"expected a code-units v{SCHEMA_VERSION} object")
     documents = payload.get("documents")
     if not isinstance(documents, list):
         raise ValueError("expected a documents array")

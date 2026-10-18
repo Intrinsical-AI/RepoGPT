@@ -18,7 +18,7 @@ class DefaultLoader(LoaderPort):
             raise CollectionFailure(f"Cannot read {collected_file.relative_path}: {exc}") from exc
         decode_error = None
         try:
-            if collected_file.language == "py":
+            if collected_file.extension == "py":
                 # Encoding detection uses Python physical lines, including CR-only files.
                 detection_bytes = re.sub(rb"\r\n?", b"\n", raw_bytes)
                 encoding, _ = tokenize.detect_encoding(io.BytesIO(detection_bytes).readline)

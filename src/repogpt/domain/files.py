@@ -17,12 +17,15 @@ class FileDigest:
 class CollectedFile:
     abs_path: Path
     relative_path: str
-    language: str
+    extension: str
+
+    def __post_init__(self) -> None:
+        if not self.relative_path:
+            raise ValueError("relative_path must not be empty")
 
 
 @dataclass(frozen=True)
 class SkippedFile:
-    abs_path: Path
     relative_path: str
     reason: str
 
@@ -43,8 +46,8 @@ class LoadedFile:
         return self.collected_file.relative_path
 
     @property
-    def language(self) -> str:
-        return self.collected_file.language
+    def extension(self) -> str:
+        return self.collected_file.extension
 
 
 @dataclass(frozen=True)
@@ -60,16 +63,12 @@ class ParsedFile:
             raise ValueError("ParsedFile cannot contain both root and failure")
 
     @property
-    def abs_path(self) -> Path:
-        return self.loaded_file.abs_path
-
-    @property
     def relative_path(self) -> str:
         return self.loaded_file.relative_path
 
     @property
-    def language(self) -> str:
-        return self.loaded_file.language
+    def extension(self) -> str:
+        return self.loaded_file.extension
 
     @property
     def digest(self) -> FileDigest:

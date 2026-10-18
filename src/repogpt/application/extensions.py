@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 
-class UnsupportedLanguagesError(ValueError):
+class UnsupportedExtensionsError(ValueError):
     def __init__(self, *, unsupported: list[str], supported: set[str]) -> None:
         self.unsupported = unsupported
         self.supported = supported
@@ -19,33 +19,33 @@ class UnsupportedLanguagesError(ValueError):
         )
 
 
-def parse_cli_languages(
-    raw_languages: str | None,
+def parse_cli_extensions(
+    raw_extensions: str | None,
     *,
     supported_extensions: set[str],
 ) -> list[str] | None:
-    if raw_languages is None:
+    if raw_extensions is None:
         return None
-    if raw_languages == "":
+    if raw_extensions == "":
         return []
-    return normalize_language_filter(
-        raw_languages.split(","),
+    return normalize_extension_filter(
+        raw_extensions.split(","),
         supported_extensions=supported_extensions,
     )
 
 
-def normalize_language_filter(
-    languages: Sequence[str] | None,
+def normalize_extension_filter(
+    extensions: Sequence[str] | None,
     *,
     supported_extensions: set[str],
 ) -> list[str] | None:
-    if languages is None:
+    if extensions is None:
         return None
 
-    normalized = [language.strip().lower() for language in languages if language.strip()]
+    normalized = [extension.strip().lower() for extension in extensions if extension.strip()]
     unsupported = sorted(set(normalized) - supported_extensions)
     if unsupported:
-        raise UnsupportedLanguagesError(
+        raise UnsupportedExtensionsError(
             unsupported=unsupported,
             supported=supported_extensions,
         )

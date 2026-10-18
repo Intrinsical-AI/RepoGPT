@@ -203,10 +203,9 @@ class CodeUnitsProjector(CodeUnitsProjectorPort):
                 "docstring_present": docstring_present,
                 "has_children": has_children,
                 "metadata": {
-                    "file": file_digest(parsed_file.digest, sha_first=True),
-                    "tags": list(node.tags or []),
-                    "attributes": dict(node.attributes or {}),
-                    "dependencies": list(node.dependencies or []),
+                    "file": file_digest(parsed_file.digest),
+                    "tags": list(node.tags),
+                    "attributes": dict(node.attributes),
                 },
             }
             if node.type == "module":

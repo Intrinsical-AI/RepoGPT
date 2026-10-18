@@ -28,7 +28,7 @@ def _python_parsed_file(tmp_path: Path, filename: str, content: str) -> ParsedFi
     sample.write_text(content, encoding="utf-8")
     raw = content.encode("utf-8")
     loaded = LoadedFile(
-        collected_file=CollectedFile(abs_path=sample, relative_path=filename, language="py"),
+        collected_file=CollectedFile(abs_path=sample, relative_path=filename, extension="py"),
         text=content,
         digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
     )
@@ -40,7 +40,7 @@ def _markdown_parsed_file(tmp_path: Path, filename: str, content: str) -> Parsed
     sample.write_text(content, encoding="utf-8")
     raw = content.encode("utf-8")
     loaded = LoadedFile(
-        collected_file=CollectedFile(abs_path=sample, relative_path=filename, language="md"),
+        collected_file=CollectedFile(abs_path=sample, relative_path=filename, extension="md"),
         text=content,
         digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
     )
@@ -63,7 +63,7 @@ def test_code_units_projection_contains_documents(tmp_path: Path) -> None:
     projection = CodeUnitsProjector().project(result, AnalysisRequest(repo_root=tmp_path))
     payload = projection.json_payload
 
-    assert payload["schema_version"] == "5"
+    assert payload["schema_version"] == "6"
     assert payload["kind"] == "code-units"
     assert payload["replace_scope"] is False
     assert [doc["unit_type"] for doc in payload["documents"]] == [
@@ -101,7 +101,7 @@ def test_code_units_projection_uses_loaded_file_snapshot(tmp_path: Path) -> None
     sample.write_text(original, encoding="utf-8")
     raw = original.encode("utf-8")
     loaded = LoadedFile(
-        collected_file=CollectedFile(abs_path=sample, relative_path="sample.py", language="py"),
+        collected_file=CollectedFile(abs_path=sample, relative_path="sample.py", extension="py"),
         text=original,
         digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
     )
@@ -126,7 +126,9 @@ def test_code_units_projection_failure_records_include_record_type(tmp_path: Pat
     raw = b"x=1\n"
     parsed_file = ParsedFile(
         loaded_file=LoadedFile(
-            collected_file=CollectedFile(abs_path=sample, relative_path="sample.py", language="py"),
+            collected_file=CollectedFile(
+                abs_path=sample, relative_path="sample.py", extension="py"
+            ),
             text="x=1\n",
             digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
         ),
@@ -142,7 +144,7 @@ def test_code_units_projection_failure_records_include_record_type(tmp_path: Pat
     payload = CodeUnitsProjector().project(result, AnalysisRequest(repo_root=tmp_path)).json_payload
 
     assert payload["failures"][0]["record_type"] == "failure"
-    assert payload["failures"][0]["schema_version"] == "5"
+    assert payload["failures"][0]["schema_version"] == "6"
 
 
 def test_code_units_projection_markdown_falls_back_to_module(tmp_path: Path) -> None:
@@ -282,7 +284,7 @@ def test_code_units_projection_is_stable_with_unicode_path_and_content(
         collected_file=CollectedFile(
             abs_path=path,
             relative_path=path.name,
-            language="py",
+            extension="py",
         ),
         text=raw.decode("utf-8"),
         digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),

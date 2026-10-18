@@ -71,8 +71,8 @@ def test_invalid_repo_key_fails_before_collection(tmp_path: Path, key: str) -> N
     "options",
     [
         {"include_tests": False},
-        {"include_tests": True, "supported_languages": []},
-        {"include_tests": True, "supported_languages": ["py"]},
+        {"include_tests": True, "supported_extensions": []},
+        {"include_tests": True, "supported_extensions": ["py"]},
     ],
 )
 def test_replacement_rejects_incomplete_selectors_before_analysis(
@@ -126,7 +126,7 @@ def test_complete_replacement_respects_known_ignores(tmp_path: Path) -> None:
         root,
         tmp_path / "out.json",
         include_tests=True,
-        supported_languages=["md", "py"],
+        supported_extensions=["md", "py"],
         replace_scope=True,
     )
     assert payload["replace_scope"] is True
@@ -185,7 +185,7 @@ def test_atomic_writer_preserves_artifact_and_cleans_temp_on_failure(
     output.write_bytes(b"previous")
     projection = AstProjection(
         {
-            "schema_version": "2",
+            "schema_version": "3",
             "repo_root": ".",
             "stats": {},
             "failures": [],

@@ -34,14 +34,14 @@ def test_blank_lines_basic_py() -> None:
 
 def test_comments_basic_py() -> None:
     text = load_file("basic.py")
-    comments = extract_comments(text, language="python")
+    comments = extract_comments(text, extension="py")
     assert comments == []
 
 
 # ---------- WITH COMMENTS MARKDOWN ----------
 def test_comments_with_comments_md() -> None:
     text = load_file("with_comments.md")
-    comments = extract_comments(text, language="markdown")
+    comments = extract_comments(text, extension="md")
     texts = [c["text"] for c in comments]
     assert texts == [
         "Este es un comentario en markdown",
@@ -53,7 +53,7 @@ def test_comments_with_comments_md() -> None:
 # ---------- EDGE CASES PY ----------
 def test_comments_edge_cases_py() -> None:
     text = load_file("edge_cases.py")
-    comments = extract_comments(text, language="python")
+    comments = extract_comments(text, extension="py")
     assert "Este es un comentario normal" in [c["text"] for c in comments]
     assert "TODO: pendiente de implementar" in [c["text"] for c in comments]
 
@@ -61,7 +61,7 @@ def test_comments_edge_cases_py() -> None:
 # ---------- DOCSTRING EXAMPLES PY ----------
 def test_docstring_examples() -> None:
     text = load_file("docstring_examples.py")
-    comments = extract_comments(text, language="python")
+    comments = extract_comments(text, extension="py")
     texts = [c["text"] for c in comments]
     # Keep this aligned with the real parser fixture.
     assert "Comentario entre docstring y código" in texts or texts == []
@@ -75,13 +75,13 @@ def test_blank_lines_basic_md() -> None:
 
 def test_comments_basic_md() -> None:
     text = load_file("basic.md")
-    comments = extract_comments(text, language="markdown")
+    comments = extract_comments(text, extension="md")
     assert comments == []
 
 
 def test_comments_edge_cases_py_unicode() -> None:
     text = load_file("edge_cases_comments.py")
-    comments = extract_comments(text, language="python")
+    comments = extract_comments(text, extension="py")
     texts = [c["text"] for c in comments]
     assert "Este es un comentario con acento: áéíóú" in texts
     assert any("😊" in t for t in texts)
@@ -99,7 +99,7 @@ def test_blank_lines_edge_cases() -> None:
 
 def test_comments_edge_cases_md() -> None:
     text = load_file("edge_cases.md")
-    comments = extract_comments(text, language="markdown")
+    comments = extract_comments(text, extension="md")
     texts = [c["text"] for c in comments]
     assert any("emoji" in t or "🎉" in t for t in texts)
     assert any("caracteres raros" in t for t in texts)
@@ -108,24 +108,24 @@ def test_comments_edge_cases_md() -> None:
 
 def test_markdown_comment_line_numbers_are_correct() -> None:
     content = "<!-- first -->\ntext\n<!-- second -->\nmore\n<!-- third\nend -->\n"
-    comments = extract_comments(content, language="markdown")
+    comments = extract_comments(content, extension="md")
     assert [c["line"] for c in comments] == [1, 3, 5]
 
 
 def test_markdown_comment_on_first_line() -> None:
-    comments = extract_comments("<!-- hello -->\nnext line", language="markdown")
+    comments = extract_comments("<!-- hello -->\nnext line", extension="md")
     assert comments[0]["line"] == 1
 
 
 def test_markdown_comment_after_several_newlines() -> None:
     content = "\n\n\n<!-- deep -->"
-    comments = extract_comments(content, language="markdown")
+    comments = extract_comments(content, extension="md")
     assert comments[0]["line"] == 4
 
 
 def test_markdown_comment_line_numbers_match_old_behavior() -> None:
     content = "line1\n<!-- a -->\nline3\n\n<!-- b -->\n<!-- c -->"
-    comments = extract_comments(content, language="markdown")
+    comments = extract_comments(content, extension="md")
     expected_lines = [
         content.count("\n", 0, content.index("<!-- a -->")) + 1,
         content.count("\n", 0, content.index("<!-- b -->")) + 1,
@@ -149,7 +149,7 @@ def test_extract_comments_logs_debug_when_python_tokenization_fails(
     monkeypatch.setattr("repogpt.utils.text_processing.logger", DummyLogger())
     monkeypatch.setattr("repogpt.utils.text_processing.tokenize.generate_tokens", boom)
 
-    comments = extract_comments("x=1", language="python")
+    comments = extract_comments("x=1", extension="py")
 
     assert comments == []
     assert logged == [

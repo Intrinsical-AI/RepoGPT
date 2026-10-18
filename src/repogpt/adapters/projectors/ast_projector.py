@@ -9,7 +9,7 @@ from repogpt.domain.files import ParsedFile
 from repogpt.ports.projectors import AstProjectorPort
 from repogpt.utils.tree_utils import flatten_tree, node_to_dict
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 
 
 class AstProjector(AstProjectorPort):
@@ -24,16 +24,16 @@ class AstProjector(AstProjectorPort):
             for parsed_file in result.parsed_files
             if parsed_file.failure is not None
         ]
-        summary = self._summary_record(
-            request=request,
-            result=result,
-            emitted_records=len(node_records),
-        )
         return AstProjection(
             json_payload={
                 "schema_version": SCHEMA_VERSION,
                 "repo_root": request.repo_root.as_posix(),
-                "stats": summary["stats"],
+                "stats": {
+                    "total_files": result.stats.total_files,
+                    "ok_files": result.stats.ok_files,
+                    "failed_files": result.stats.failed_files,
+                    "emitted_records": len(node_records),
+                },
                 "failures": failure_records,
                 "records": node_records,
             },
@@ -56,27 +56,8 @@ class AstProjector(AstProjectorPort):
                 "record_type": "node",
                 "schema_version": SCHEMA_VERSION,
                 **node,
-                "path": str(parsed_file.relative_path or node.get("path") or ""),
+                "path": parsed_file.relative_path,
                 "file": file_digest(parsed_file.digest),
             }
             for node in nodes
         ]
-
-    def _summary_record(
-        self,
-        *,
-        request: AnalysisRequest,
-        result: AnalysisResult,
-        emitted_records: int,
-    ) -> dict[str, Any]:
-        return {
-            "record_type": "summary",
-            "schema_version": SCHEMA_VERSION,
-            "repo_root": request.repo_root.as_posix(),
-            "stats": {
-                "total_files": result.stats.total_files,
-                "ok_files": result.stats.ok_files,
-                "failed_files": result.stats.failed_files,
-                "emitted_records": emitted_records,
-            },
-        }

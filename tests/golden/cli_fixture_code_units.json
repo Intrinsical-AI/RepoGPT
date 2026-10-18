@@ -1,5 +1,5 @@
 {
-  "schema_version": "5",
+  "schema_version": "6",
   "kind": "code-units",
   "repo_key": "cli_repo",
   "snapshot_id": "<SNAPSHOT_ID>",
@@ -14,7 +14,7 @@
   "failures": [
     {
       "record_type": "failure",
-      "schema_version": "5",
+      "schema_version": "6",
       "path": "bad.py",
       "language": "py",
       "error": "File \"bad.py\", line 1\n    def broken(:\n               ^\nSyntaxError: invalid syntax",
@@ -48,16 +48,13 @@
       "has_children": true,
       "metadata": {
         "file": {
-          "sha256": "5a87f3df70d35798225f6704cd76e098ec06f4e69833e8a77054120456e5b79c",
-          "size": 88
+          "size": 88,
+          "sha256": "5a87f3df70d35798225f6704cd76e098ec06f4e69833e8a77054120456e5b79c"
         },
         "tags": [
           "TODO"
         ],
-        "attributes": {
-          "relative_path": "sample.md"
-        },
-        "dependencies": []
+        "attributes": {}
       },
       "content_ranges": []
     },
@@ -86,14 +83,13 @@
       "has_children": true,
       "metadata": {
         "file": {
-          "sha256": "5a87f3df70d35798225f6704cd76e098ec06f4e69833e8a77054120456e5b79c",
-          "size": 88
+          "size": 88,
+          "sha256": "5a87f3df70d35798225f6704cd76e098ec06f4e69833e8a77054120456e5b79c"
         },
         "tags": [],
         "attributes": {
           "level": 1
-        },
-        "dependencies": []
+        }
       }
     },
     {
@@ -122,14 +118,13 @@
       "has_children": false,
       "metadata": {
         "file": {
-          "sha256": "5a87f3df70d35798225f6704cd76e098ec06f4e69833e8a77054120456e5b79c",
-          "size": 88
+          "size": 88,
+          "sha256": "5a87f3df70d35798225f6704cd76e098ec06f4e69833e8a77054120456e5b79c"
         },
         "tags": [],
         "attributes": {
           "fence_language": "python"
-        },
-        "dependencies": []
+        }
       }
     },
     {
@@ -155,14 +150,11 @@
       "has_children": true,
       "metadata": {
         "file": {
-          "sha256": "774e76c0483e7970035e1e4ea43638b87dbef3fbd6c6b7a3b68289a6b4f76560",
-          "size": 144
+          "size": 144,
+          "sha256": "774e76c0483e7970035e1e4ea43638b87dbef3fbd6c6b7a3b68289a6b4f76560"
         },
         "tags": [],
-        "attributes": {
-          "relative_path": "sample.py"
-        },
-        "dependencies": []
+        "attributes": {}
       },
       "content_ranges": [
         {
@@ -200,15 +192,14 @@
       "has_children": true,
       "metadata": {
         "file": {
-          "sha256": "774e76c0483e7970035e1e4ea43638b87dbef3fbd6c6b7a3b68289a6b4f76560",
-          "size": 144
+          "size": 144,
+          "sha256": "774e76c0483e7970035e1e4ea43638b87dbef3fbd6c6b7a3b68289a6b4f76560"
         },
         "tags": [],
         "attributes": {
           "bases": [],
           "decorators": []
-        },
-        "dependencies": []
+        }
       }
     },
     {
@@ -237,8 +228,8 @@
       "has_children": false,
       "metadata": {
         "file": {
-          "sha256": "774e76c0483e7970035e1e4ea43638b87dbef3fbd6c6b7a3b68289a6b4f76560",
-          "size": 144
+          "size": 144,
+          "sha256": "774e76c0483e7970035e1e4ea43638b87dbef3fbd6c6b7a3b68289a6b4f76560"
         },
         "tags": [],
         "attributes": {
@@ -261,8 +252,7 @@
           "returns": "int",
           "visibility": "public",
           "signature": "method(self, value: int) -> int"
-        },
-        "dependencies": []
+        }
       }
     },
     {
@@ -290,8 +280,8 @@
       "has_children": false,
       "metadata": {
         "file": {
-          "sha256": "774e76c0483e7970035e1e4ea43638b87dbef3fbd6c6b7a3b68289a6b4f76560",
-          "size": 144
+          "size": 144,
+          "sha256": "774e76c0483e7970035e1e4ea43638b87dbef3fbd6c6b7a3b68289a6b4f76560"
         },
         "tags": [],
         "attributes": {
@@ -308,8 +298,7 @@
           "returns": "str",
           "visibility": "public",
           "signature": "helper(name: str='world') -> str"
-        },
-        "dependencies": []
+        }
       }
     }
   ]

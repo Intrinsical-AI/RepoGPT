@@ -1,30 +1,58 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
 import sys
 import tempfile
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Literal, overload
 
 from repogpt.domain.analysis import AstProjection, CodeUnitsProjection
 
 
+@dataclass(frozen=True)
+class ArtifactWriteReceipt:
+    size_bytes: int
+    sha256: str
+
+
 class ArtifactWriter:
+    @overload
+    def write(
+        self,
+        projection: AstProjection | CodeUnitsProjection,
+        output_path: Path,
+        *,
+        format: Literal["json", "ndjson"] = "json",
+    ) -> ArtifactWriteReceipt: ...
+
+    @overload
+    def write(
+        self,
+        projection: AstProjection | CodeUnitsProjection,
+        output_path: None,
+        *,
+        format: Literal["json", "ndjson"] = "json",
+    ) -> None: ...
+
     def write(
         self,
         projection: AstProjection | CodeUnitsProjection,
         output_path: Path | None,
         *,
         format: Literal["json", "ndjson"] = "json",
-    ) -> None:
+    ) -> ArtifactWriteReceipt | None:
         if output_path is None:
             self._write_stdout(projection, format)
-            return
+            return None
 
         temporary_path: Path | None = None
+        digest = hashlib.sha256()
+        size_bytes = 0
         try:
             try:
                 mode = stat.S_IMODE(output_path.stat().st_mode)
@@ -44,6 +72,9 @@ class ArtifactWriter:
                 temporary_path = Path(handle.name)
                 for chunk in self._chunks(projection, format):
                     handle.write(chunk)
+                    encoded = chunk.encode("utf-8")
+                    digest.update(encoded)
+                    size_bytes += len(encoded)
                 handle.flush()
             temporary_path.chmod(mode)
             os.replace(temporary_path, output_path)
@@ -54,6 +85,7 @@ class ArtifactWriter:
         finally:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
+        return ArtifactWriteReceipt(size_bytes=size_bytes, sha256=digest.hexdigest())
 
     def _write_stdout(
         self,

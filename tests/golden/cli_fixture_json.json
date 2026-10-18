@@ -1,5 +1,5 @@
 {
-  "schema_version": "2",
+  "schema_version": "3",
   "repo_root": "<REPO_ROOT>",
   "stats": {
     "total_files": 3,
@@ -10,7 +10,7 @@
   "failures": [
     {
       "record_type": "failure",
-      "schema_version": "2",
+      "schema_version": "3",
       "path": "bad.py",
       "language": "py",
       "error": "File \"bad.py\", line 1\n    def broken(:\n               ^\nSyntaxError: invalid syntax",
@@ -23,7 +23,7 @@
   "records": [
     {
       "record_type": "node",
-      "schema_version": "2",
+      "schema_version": "3",
       "id": "290057c72b3f70ef",
       "type": "module",
       "name": "sample",
@@ -72,18 +72,11 @@
               "docstring": null,
               "comments": [],
               "tags": [],
-              "dependencies": [
-                {
-                  "text": "Docs",
-                  "url": "https://example.com"
-                }
-              ],
+              "dependencies": [],
               "parent_id": "bcba3c4ec8f5acb3",
               "children": [],
               "attributes": {
-                "text": "Docs",
-                "url": "https://example.com",
-                "start_column": 0
+                "url": "https://example.com"
               },
               "metrics": {}
             },
@@ -114,9 +107,7 @@
           "metrics": {}
         }
       ],
-      "attributes": {
-        "relative_path": "sample.md"
-      },
+      "attributes": {},
       "metrics": {
         "blank_lines": 3,
         "non_empty_lines": 6,
@@ -131,7 +122,7 @@
     },
     {
       "record_type": "node",
-      "schema_version": "2",
+      "schema_version": "3",
       "id": "1a984cf1d710498f",
       "type": "module",
       "name": "sample",
@@ -170,13 +161,7 @@
             "module": null,
             "import_kind": "import",
             "is_relative": false,
-            "import_level": 0,
-            "imported_names": [
-              {
-                "name": "os",
-                "asname": null
-              }
-            ]
+            "import_level": 0
           },
           "metrics": {}
         },
@@ -273,9 +258,7 @@
           "metrics": {}
         }
       ],
-      "attributes": {
-        "relative_path": "sample.py"
-      },
+      "attributes": {},
       "metrics": {
         "blank_lines": 4,
         "non_empty_lines": 6

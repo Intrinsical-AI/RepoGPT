@@ -181,7 +181,7 @@ def test_collect_distinguishes_language_filter_from_unsupported_extension(tmp_pa
     (tmp_path / "notes.txt").write_text("notes\n", encoding="utf-8")
 
     files, skipped = DefaultCollector().collect(
-        AnalysisRequest(repo_root=tmp_path, supported_languages=["py"]), {"py", "md"}
+        AnalysisRequest(repo_root=tmp_path, supported_extensions=["py"]), {"py", "md"}
     )
 
     assert [item.relative_path for item in files] == ["sample.py"]

@@ -11,7 +11,7 @@ from repogpt.domain.files import ParsedFile, SkippedFile
 class AnalysisRequest:
     repo_root: Path
     include_tests: bool = False
-    supported_languages: list[str] | None = None
+    supported_extensions: list[str] | None = None
     max_file_size: int = 2_000_000
     projection: Literal["ast", "code_units"] = "ast"
     format: Literal["json", "ndjson"] = "json"

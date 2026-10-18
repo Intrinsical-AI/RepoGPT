@@ -13,7 +13,7 @@ from repogpt.domain.nodes import CodeNode
 def _loaded(path: str = "test.py", content: str = "x=1\n") -> LoadedFile:
     raw = content.encode("utf-8")
     return LoadedFile(
-        collected_file=CollectedFile(abs_path=Path(path), relative_path=path, language="py"),
+        collected_file=CollectedFile(abs_path=Path(path), relative_path=path, extension="py"),
         text=content,
         digest=FileDigest(size=len(raw), sha256=hashlib.sha256(raw).hexdigest()),
     )
@@ -40,7 +40,7 @@ def test_ast_projector_json_envelope() -> None:
 
     projection = AstProjector().project(result, AnalysisRequest(repo_root=Path.cwd()))
 
-    assert projection.json_payload["schema_version"] == "2"
+    assert projection.json_payload["schema_version"] == "3"
     assert projection.json_payload["failures"] == []
     assert projection.json_payload["records"][0]["record_type"] == "node"
 
@@ -55,7 +55,6 @@ def test_ast_projector_ndjson_contains_failure_and_summary() -> None:
         parsed_files=[parsed_file],
         skipped_files=[
             SkippedFile(
-                abs_path=Path("skip.py"),
                 relative_path="skip.py",
                 reason="ignored",
             )
