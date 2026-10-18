@@ -24,6 +24,9 @@ classifiers = [
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Python :: 3.15",
   "Operating System :: OS Independent"
 ]
 
@@ -32,13 +35,12 @@ dependencies = [
   "structlog>=24.1.0",   # structured logging
 ]
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
   "pytest>=7.0", 
   "ruff>=0.0.291", 
   "mypy>=1.0",
   "pre-commit>=2.20",
-  "coverage>=6.4",
   "jsonschema>=4.0"
 ]
 
@@ -54,7 +56,7 @@ repogpt = "repogpt.app.cli:main"
 repogpt-mcp = "repogpt.mcp_server:main"
 
 [build-system]
-requires    = ["setuptools>=77.0.3", "wheel"]
+requires    = ["setuptools>=77.0.3"]
 build-backend = "setuptools.build_meta"
 
 
