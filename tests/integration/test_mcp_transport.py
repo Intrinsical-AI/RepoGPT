@@ -184,7 +184,9 @@ def test_tool_execution_errors_preserve_stdio_session(tmp_path: Path, case: str)
     failed, recovered = responses
     assert "error" not in failed
     assert failed["result"]["isError"] is True
-    assert expected_error in failed["result"]["content"][0]["text"]
+    failure_payload = json.loads(failed["result"]["content"][0]["text"])
+    assert set(failure_payload) == {"error"}
+    assert expected_error in failure_payload["error"]
     assert recovered["result"]["isError"] is False
     payload = json.loads(recovered["result"]["content"][0]["text"])
     assert {document["path"] for document in payload["documents"]} == {"sample.py"}

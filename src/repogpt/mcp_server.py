@@ -249,7 +249,7 @@ def handle_request(request: object) -> dict[str, Any] | None:
         except Exception as exc:
             # A tool failure must not kill the stdio session.
             logger.error("tool error", tool=tool_name, error=str(exc))
-            result = {"content": [{"type": "text", "text": str(exc)}], "isError": True}
+            result = _text_result({"error": str(exc)}, is_error=True)
     else:
         return _error(req_id, -32601, f"Unknown method: {method}")
     return {"jsonrpc": "2.0", "id": req_id, "result": result}
