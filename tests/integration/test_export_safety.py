@@ -18,7 +18,12 @@ from repogpt.domain.analysis import (
     AstProjection,
     CodeUnitsProjection,
 )
-from repogpt.domain.errors import CollectionFailure, InvalidRequestError, UnsafeReplacementError
+from repogpt.domain.errors import (
+    ArtifactConsistencyError,
+    CollectionFailure,
+    InvalidRequestError,
+    UnsafeReplacementError,
+)
 from repogpt.mcp_server import handle_request
 from repogpt.runtime import build_analyze_repo
 
@@ -224,7 +229,10 @@ def test_residual_identity_collision_aborts_before_writing(tmp_path: Path, kind:
     if kind == "internal":
         with (
             patch("repogpt.utils.node_utils.stable_node_id", return_value="same"),
-            pytest.raises(ValueError, match="Duplicate AST"),
+            pytest.raises(
+                ArtifactConsistencyError,
+                match="Duplicate AST node IDs; refusing to emit an ambiguous artifact",
+            ),
         ):
             _export(root, output)
     else:
@@ -240,7 +248,10 @@ def test_residual_identity_collision_aborts_before_writing(tmp_path: Path, kind:
 
         with (
             patch.object(CodeUnitsProjector, "_identities", collide),
-            pytest.raises(ValueError, match="Duplicate external"),
+            pytest.raises(
+                ArtifactConsistencyError,
+                match="Duplicate external IDs; refusing to emit an ambiguous artifact",
+            ),
         ):
             _export(root, output)
     assert output.read_bytes() == b"previous"

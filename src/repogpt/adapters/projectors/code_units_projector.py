@@ -9,6 +9,7 @@ from typing import Any
 from repogpt.adapters.projectors._common import failure_record, file_digest
 from repogpt.domain.analysis import AnalysisRequest, AnalysisResult, CodeUnitsProjection
 from repogpt.domain.code_units import KIND, SCHEMA_VERSION
+from repogpt.domain.errors import ArtifactConsistencyError
 from repogpt.domain.files import ParsedFile
 from repogpt.domain.nodes import CodeNode
 from repogpt.ports.projectors import CodeUnitsProjectorPort
@@ -39,7 +40,7 @@ def _residual_module_content(
             continue
         start, end = node.start_line, node.end_line
         if start is None or end is None or not 1 <= start <= end <= len(lines):
-            raise ValueError(f"Invalid source span for {node.type} in {node.path}")
+            raise ArtifactConsistencyError(f"Invalid source span for {node.type} in {node.path}")
         for index in range(start - 1, end):
             covered[index] = True
 
@@ -97,7 +98,9 @@ class CodeUnitsProjector(CodeUnitsProjectorPort):
         ]
         external_ids = [document["external_id"] for document in documents]
         if len(external_ids) != len(set(external_ids)):
-            raise ValueError("Duplicate external IDs; refusing to emit an ambiguous artifact")
+            raise ArtifactConsistencyError(
+                "Duplicate external IDs; refusing to emit an ambiguous artifact"
+            )
         return CodeUnitsProjection(
             json_payload={
                 "schema_version": SCHEMA_VERSION,
@@ -288,7 +291,7 @@ class CodeUnitsProjector(CodeUnitsProjectorPort):
         for ancestor in reversed(ancestors):
             if ancestor.id in selected_ids:
                 return ancestor
-        raise ValueError(f"No emitted container for {node.type} in {node.path}")
+        raise ArtifactConsistencyError(f"No emitted container for {node.type} in {node.path}")
 
     def _ancestors(self, *, node: CodeNode, nodes: dict[str, CodeNode]) -> list[CodeNode]:
         ancestors: list[CodeNode] = []

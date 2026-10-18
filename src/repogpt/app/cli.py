@@ -7,10 +7,15 @@ from pathlib import Path
 import structlog
 
 from repogpt.adapters.writers.artifact_writer import ArtifactWriter
-from repogpt.application.exit_codes import exit_code_for_result
+from repogpt.application.exit_codes import (
+    EXIT_OPERATIONAL_ERROR,
+    EXIT_SUCCESS,
+    exit_code_for_result,
+)
 from repogpt.application.languages import UnsupportedLanguagesError, parse_cli_languages
 from repogpt.domain.analysis import AnalysisRequest
 from repogpt.domain.errors import (
+    ArtifactConsistencyError,
     CollectionFailure,
     InvalidRepoError,
     InvalidRequestError,
@@ -85,33 +90,42 @@ def main() -> int:
 
     try:
         result, projection = analyzer.run(request)
-        ArtifactWriter().write(projection, output_path, format=request.format)
-        for parsed_file in result.parsed_files:
-            if parsed_file.failure is not None:
-                log.error(
-                    "aborting — fail-fast" if result.stopped_early else "parse error",
-                    path=parsed_file.relative_path,
-                    error=parsed_file.failure.message,
-                )
-        return exit_code_for_result(result)
     except InvalidRequestError as exc:
         parser.error(str(exc))
     except InvalidRepoError as exc:
         log.error("invalid repository path", error=str(exc))
-        return 3
-    except (CollectionFailure, UnsafeReplacementError) as exc:
+        return EXIT_OPERATIONAL_ERROR
+    except ArtifactConsistencyError as exc:
+        log.error("analysis consistency error", error=str(exc))
+        return EXIT_OPERATIONAL_ERROR
+    except (CollectionFailure, UnsafeReplacementError, OSError) as exc:
         log.error("analysis aborted", error=str(exc))
-        return 3
+        return EXIT_OPERATIONAL_ERROR
+    except Exception as exc:
+        log.error("unexpected error", error=str(exc))
+        return EXIT_OPERATIONAL_ERROR
+
+    try:
+        ArtifactWriter().write(projection, output_path, format=request.format)
     except OSError as exc:
         if output_path is None:
             silence_failed_stdout()
             if isinstance(exc, BrokenPipeError):
-                return 0
+                return EXIT_SUCCESS
         log.error("output I/O error", error=str(exc))
-        return 3
+        return EXIT_OPERATIONAL_ERROR
     except Exception as exc:
         log.error("unexpected error", error=str(exc))
-        return 3
+        return EXIT_OPERATIONAL_ERROR
+
+    for parsed_file in result.parsed_files:
+        if parsed_file.failure is not None:
+            log.error(
+                "aborting — fail-fast" if result.stopped_early else "parse error",
+                path=parsed_file.relative_path,
+                error=parsed_file.failure.message,
+            )
+    return exit_code_for_result(result)
 
 
 if __name__ == "__main__":

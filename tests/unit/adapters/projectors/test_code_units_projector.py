@@ -4,12 +4,15 @@ import hashlib
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
 from repogpt.adapters.parsers.md_parser import MarkdownParser
 from repogpt.adapters.parsers.py_parser import PythonParser
 from repogpt.adapters.projectors.code_units_projector import CodeUnitsProjector
 from repogpt.domain.analysis import AnalysisRequest, AnalysisResult, AnalysisStats
-from repogpt.domain.errors import ParseFailure
+from repogpt.domain.errors import ArtifactConsistencyError, ParseFailure
 from repogpt.domain.files import CollectedFile, FileDigest, LoadedFile, ParsedFile
+from repogpt.domain.nodes import CodeNode
 
 
 def _documents(payload: dict[str, object]) -> list[dict[str, Any]]:
@@ -154,6 +157,31 @@ def test_code_units_projection_markdown_falls_back_to_module(tmp_path: Path) -> 
 
     assert len(payload["documents"]) == 1
     assert _document(payload)["unit_type"] == "module"
+
+
+def test_code_units_invalid_source_span_raises_consistency_error(tmp_path: Path) -> None:
+    parsed_file = _python_parsed_file(tmp_path, "sample.py", "def f(): pass\n")
+    assert parsed_file.root is not None
+    parsed_file.root.children[0].end_line = 2
+    result = AnalysisResult(
+        parsed_files=[parsed_file],
+        skipped_files=[],
+        stats=AnalysisStats(total_files=1, ok_files=1, failed_files=0),
+    )
+
+    with pytest.raises(
+        ArtifactConsistencyError, match="Invalid source span for function in sample.py"
+    ):
+        CodeUnitsProjector().project(result, AnalysisRequest(repo_root=tmp_path))
+
+
+def test_code_units_missing_container_raises_consistency_error() -> None:
+    node = CodeNode(id="function", type="function", path="sample.py")
+
+    with pytest.raises(
+        ArtifactConsistencyError, match="No emitted container for function in sample.py"
+    ):
+        CodeUnitsProjector()._container_node(node=node, ancestors=[], selected_ids=set())
 
 
 def test_code_units_projection_preserves_scope_unicity_for_symbol_collisions(

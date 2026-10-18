@@ -11,6 +11,10 @@ class CollectionFailure(Exception):
     """Raised when collection cannot proceed safely."""
 
 
+class ArtifactConsistencyError(RuntimeError):
+    """Raised when analysis cannot emit an internally consistent artifact."""
+
+
 class InvalidRequestError(ValueError):
     """Raised before analysis when requested options are inconsistent."""
 

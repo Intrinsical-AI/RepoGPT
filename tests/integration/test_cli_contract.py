@@ -261,6 +261,61 @@ def test_cli_file_repo_path_returns_clean_exit_code_3() -> None:
     assert "Traceback" not in proc.stderr
 
 
+@pytest.mark.parametrize("error_type", ["OSError", "BrokenPipeError"])
+def test_cli_analysis_io_error_preserves_stdout(tmp_path: Path, error_type: str) -> None:
+    script = (
+        "from unittest.mock import patch\n"
+        "from repogpt.app.cli import main\n"
+        "with patch('repogpt.application.analyze_repo.AnalyzeRepo.run', "
+        f"side_effect={error_type}('input vanished')):\n"
+        "    code = main()\n"
+        "print('stdout remains usable', flush=True)\n"
+        "raise SystemExit(code)\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path), "--stdout"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONPATH": str(SRC_ROOT)},
+        timeout=15,
+    )
+
+    assert proc.returncode == 3
+    assert proc.stdout == "stdout remains usable\n"
+    assert "analysis aborted" in proc.stderr
+    assert "input vanished" in proc.stderr
+    assert "output I/O error" not in proc.stderr
+    assert "unexpected error" not in proc.stderr
+
+
+def test_cli_consistency_error_preserves_diagnostic_and_existing_artifact(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "sample.py").write_text("def a(): pass\ndef b(): pass\n", encoding="utf-8")
+    output = tmp_path / "out.json"
+    output.write_bytes(b"previous artifact")
+    script = (
+        "from unittest.mock import patch\n"
+        "from repogpt.app.cli import main\n"
+        "with patch('repogpt.utils.node_utils.stable_node_id', return_value='same'):\n"
+        "    raise SystemExit(main())\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", script, str(repo), "-o", str(output)],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "PYTHONPATH": str(SRC_ROOT)},
+        timeout=15,
+    )
+
+    assert proc.returncode == 3
+    assert proc.stdout == ""
+    assert "analysis consistency error" in proc.stderr
+    assert "Duplicate AST node IDs; refusing to emit an ambiguous artifact" in proc.stderr
+    assert "unexpected error" not in proc.stderr
+    assert output.read_bytes() == b"previous artifact"
+
+
 @pytest.mark.parametrize(
     "options",
     [

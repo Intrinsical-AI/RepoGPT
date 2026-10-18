@@ -11,7 +11,7 @@ from repogpt.domain.analysis import (
     AstProjection,
     CodeUnitsProjection,
 )
-from repogpt.domain.errors import InvalidRepoError, ParseFailure
+from repogpt.domain.errors import ArtifactConsistencyError, InvalidRepoError, ParseFailure
 from repogpt.domain.files import ParsedFile
 from repogpt.ports.collector import CollectorPort
 from repogpt.ports.loader import LoaderPort
@@ -101,7 +101,9 @@ class AnalyzeRepo:
             for node in iter_nodes(parsed_file.root)
         ]
         if len(node_ids) != len(set(node_ids)):
-            raise ValueError("Duplicate AST node IDs; refusing to emit an ambiguous artifact")
+            raise ArtifactConsistencyError(
+                "Duplicate AST node IDs; refusing to emit an ambiguous artifact"
+            )
 
         projection: AstProjection | CodeUnitsProjection
         if request.projection == "code_units":

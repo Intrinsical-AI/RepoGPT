@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from repogpt.application.exit_codes import exit_code_for_result
 from repogpt.domain.analysis import AnalysisRequest
-from repogpt.domain.errors import InvalidRepoError
+from repogpt.domain.errors import ArtifactConsistencyError, InvalidRepoError
 from repogpt.runtime import build_analyze_repo
 
 
@@ -93,3 +94,12 @@ def test_analyze_repo_invalid_repo_raises_invalid_repo_error(tmp_path: Path) -> 
         assert "does not exist" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("InvalidRepoError not raised")
+
+
+def test_duplicate_ast_ids_raise_consistency_error(tmp_path: Path) -> None:
+    (tmp_path / "sample.py").write_text("def a(): pass\ndef b(): pass\n", encoding="utf-8")
+    with (
+        patch("repogpt.utils.node_utils.stable_node_id", return_value="same"),
+        pytest.raises(ArtifactConsistencyError, match="Duplicate AST node IDs"),
+    ):
+        build_analyze_repo().run(AnalysisRequest(repo_root=tmp_path))
