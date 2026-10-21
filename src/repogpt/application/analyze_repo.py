@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import traceback
 from dataclasses import replace
+from pathlib import Path
+from typing import Literal
 
 from repogpt.application.export_policy import validate_replacement, validate_request
+from repogpt.application.extensions import normalize_extension_filter
 from repogpt.domain.analysis import (
     AnalysisRequest,
     AnalysisResult,
@@ -35,6 +38,35 @@ class AnalyzeRepo:
         self.parser_registry = parser_registry
         self.ast_projector = ast_projector
         self.code_units_projector = code_units_projector
+
+    def request(
+        self,
+        *,
+        repo_path: str,
+        projection: Literal["ast", "code-units"] = "ast",
+        include_tests: bool = False,
+        extensions: list[str] | None = None,
+        fail_fast: bool = False,
+        repo_key: str | None = None,
+        replace_scope: bool = False,
+        flatten: Literal["node", "file"] = "node",
+        format: Literal["json", "ndjson"] = "json",
+    ) -> AnalysisRequest:
+        """Build the same validated selection for CLI and MCP operations."""
+        return AnalysisRequest(
+            repo_root=Path(repo_path),
+            include_tests=include_tests,
+            supported_extensions=normalize_extension_filter(
+                extensions,
+                supported_extensions=self.parser_registry.supported_extensions(),
+            ),
+            projection="code_units" if projection == "code-units" else "ast",
+            format=format,
+            flatten_kind=flatten,
+            fail_fast=fail_fast,
+            repo_key=repo_key,
+            replace_scope=replace_scope,
+        )
 
     def run(
         self, request: AnalysisRequest

@@ -59,9 +59,15 @@ def _normalize_ndjson(records: list[dict[str, object]]) -> list[dict[str, object
 
 
 def test_cli_rejects_unsupported_language() -> None:
-    proc = _run(["--languages", "ts"])
+    proc = _run(["--extensions", "ts"])
     assert proc.returncode == 2
-    assert "unsupported languages" in proc.stderr
+    assert "unsupported extensions" in proc.stderr
+
+
+def test_cli_removes_languages_alias() -> None:
+    proc = _run(["--languages", "py"])
+    assert proc.returncode == 2
+    assert "unrecognized arguments" in proc.stderr
 
 
 @pytest.mark.parametrize("repo_path", ["", " \t "])
@@ -106,7 +112,7 @@ def test_cli_fail_fast_returns_exit_code_1() -> None:
 
 
 def test_cli_empty_languages_means_collect_nothing() -> None:
-    proc = _run(["--languages", "", "--stdout", "--format", "json"], CLI_FIXTURE)
+    proc = _run(["--extensions", "", "--stdout", "--format", "json"], CLI_FIXTURE)
 
     assert proc.returncode == 0
     payload = json.loads(proc.stdout)

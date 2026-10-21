@@ -86,8 +86,12 @@ def test_mcp_closed_stdout_exits_cleanly(tmp_path: Path, after_prefix: bool) -> 
     request = {
         "jsonrpc": "2.0",
         "id": 1,
-        "method": "tools/call",
-        "params": {"name": "repogpt_emit_code_units", "arguments": {"repo_path": str(tmp_path)}},
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-11-25",
+            "capabilities": {},
+            "clientInfo": {"name": "test", "version": "1"},
+        },
     }
     code, stderr = _closed_output(
         [sys.executable, "-m", "repogpt.mcp_server"],
@@ -110,7 +114,21 @@ def test_other_stdout_io_errors_keep_exit_code_3(tmp_path: Path, entrypoint: str
     incoming = None
     if entrypoint == "mcp":
         command = [sys.executable, "-m", "repogpt.mcp_server"]
-        incoming = '{"jsonrpc":"2.0","id":1,"method":"tools/list"}\n'
+        incoming = (
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {
+                        "protocolVersion": "2025-11-25",
+                        "capabilities": {},
+                        "clientInfo": {"name": "test", "version": "1"},
+                    },
+                }
+            )
+            + "\n"
+        )
     with destination.open("rb") as readonly_stdout:
         run = subprocess.run(
             command,

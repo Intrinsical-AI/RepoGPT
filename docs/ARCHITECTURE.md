@@ -63,32 +63,32 @@ Responsibilities:
 
 ### 3.2 MCP stdio server
 
-Entry point:
+`repogpt-mcp` uses the official SDK, installed through the optional `[mcp]`
+extra. Its internal protocol target is `2025-11-25`; the SDK owns framing,
+negotiation, initialization, ping and notification handling. Ordinary library
+and CLI imports do not require or initialize MCP.
 
-- `repogpt-mcp`
+The server exposes `repogpt_analyze` and `repogpt_compare_profiles` as read-only
+operations and `repogpt_export` as explicit file publication. The CLI and MCP
+share `AnalyzeRepo.request`, `AnalyzeRepo.run` and `ArtifactWriter`. Destination
+validation lives beside the writer. The old combined emit tools are removed.
 
-Transport:
+Analysis defaults to a summary; inline mode adds the native AST v3 or code-units
+v6 artifact. Export requires `output_path` and returns a verified receipt with
+completion and failure evidence. NDJSON is available only for AST files. Native
+artifact bytes, identities, schemas and replacement rules remain unchanged.
 
-- line-delimited JSON-RPC over stdio
-- initialization returns the sole supported protocol version `2025-06-18` and package-derived server metadata; clients requesting another version receive this supported alternative
+Strict JSON Schema validators check both input and output. Guarded request
+handlers bypass the SDK's convenience tool decorator to preserve JSON-RPC
+argument errors (`-32602`), sanitized internal errors (`-32603`) and structured
+expected failures (`isError`). Structured payloads and compact text match,
+including partial results. No response can exceed 256 KiB; oversized results
+return a size error rather than truncated artifacts.
 
-Built-in tools:
-
-- `repogpt_emit_code_units`
-- `repogpt_emit_ast`
-- `repogpt_compare_profiles`
-
-The MCP server reuses the analysis runtime and extension-filter policies used by the CLI. Tool results contain `structuredContent`, identical compact JSON in `content[0].text`, and `isError`. JSON artifacts are returned as native objects. Inline AST NDJSON uses `{"schema_version":"3","format":"ndjson","records":[...]}` because structured content must be an object. Execution failures use `{"error":"message"}` with `isError: true`. Partial/fail-fast results retain their inline artifact or file receipt with `isError: true`.
-
-Both emit tools accept optional `output_path`. File mode writes the original projection through `ArtifactWriter` and returns exactly `output_path`, `format`, `schema_version`, `size_bytes`, `sha256`, and `stats`. JSON/NDJSON bytes match the CLI writer; NDJSON files contain actual record lines rather than the MCP wrapper. The absolute receipt path resolves the parent directory without following the leaf. Existing regular files are atomically replaced with permissions retained; missing parent directories are not created. Standard-I/O aliases, symlink/non-regular leaves, blank paths, and existing supported source files inside the repository are rejected. The source guard runs before analysis, covering filters and fail-fast stops.
-
-Tool discovery publishes strict output-schema unions using the packaged artifact definitions, receipt variants, and execution-error objects. Partial artifacts satisfy the artifact branch. Emit tools advertise `readOnlyHint: false` and `destructiveHint: true`; comparison advertises `readOnlyHint: true`. `repogpt_compare_profiles` accepts `top_k` (integer, minimum zero, default three) and rejects invalid values before reading its artifact input.
-
-Both entry points configure structlog output on STDERR. Importing the MCP module does not configure logging. Valid notifications receive no responses and do not dispatch tools; invalid envelopes are rejected before notification handling, including envelopes without an ID. Wire validation checks required/unknown fields, booleans, extension arrays, integers, minima, and enums without coercion. Handlers apply shared semantic policies such as the repository-key pattern before collection. Error codes distinguish malformed JSON (`-32700`), envelopes (`-32600`), unknown methods (`-32601`), arguments (`-32602`). Failed analysis and refused replacement use MCP tool results with `isError: true`. `ping` returns `{}`.
-
-JSON decoder `ValueError` failures, including oversized integer literals, return parse error `-32700` and leave the MCP session available for the next request.
-
-CLI rejects conflicting output targets and explicit AST-only flattening options on code-units exports before analysis. The application validates each analysis request once; CLI maps invalid requests to argument diagnostics.
+The SDK event loop offloads blocking work through one cancellation-safe worker
+slot. A timed-out client must inspect artifacts before retrying publication.
+Notifications cannot execute tools. SDK diagnostics, including root records,
+are sanitized before reaching STDERR; safe application event categories remain.
 
 ## 4. Domain and projection model
 
@@ -103,7 +103,7 @@ The internal structural representation is a `CodeNode` tree with:
 
 Internal node IDs do not depend on names, parents, or ending spans. They change when an origin moves; retrieval-facing documents have separate semantic external IDs.
 
-Internal request/file APIs use `AnalysisRequest.supported_extensions` and file `extension` properties. The parser registry and `extract_comments` share the extension names `py` and `md`. The CLI flag `--languages` and MCP field `languages` remain unchanged. `CollectedFile` rejects empty `relative_path` values, and projectors use that canonical path directly.
+Internal request/file APIs use `AnalysisRequest.supported_extensions` and file `extension` properties. The parser registry and `extract_comments` share the extension names `py` and `md`. The CLI flag `--extensions` and MCP field `extensions` share that vocabulary. `CollectedFile` rejects empty `relative_path` values, and projectors use that canonical path directly.
 
 ### 4.2 Public projections
 

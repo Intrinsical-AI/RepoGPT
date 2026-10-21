@@ -12,6 +12,38 @@ from pathlib import Path
 from typing import Literal, overload
 
 from repogpt.domain.analysis import AstProjection, CodeUnitsProjection
+from repogpt.domain.errors import InvalidRequestError
+
+
+def file_output_path(
+    value: str,
+    *,
+    repo_root: Path,
+    supported_extensions: set[str],
+) -> Path:
+    """Validate a file destination without following a leaf symlink.
+
+    The parent must exist. Existing repository sources may never be replaced,
+    including sources omitted by selection or fail-fast.
+    """
+    if not value.strip() or value in {"-", "/dev/stdin", "/dev/stdout", "/dev/stderr"}:
+        raise InvalidRequestError("output_path must name an artifact file, not standard I/O")
+    candidate = Path(value)
+    try:
+        destination = candidate.parent.resolve(strict=True) / candidate.name
+    except OSError as exc:
+        raise OSError(exc.errno, "failed to resolve artifact destination", str(candidate)) from exc
+    try:
+        mode = destination.lstat().st_mode
+    except FileNotFoundError:
+        return destination
+    if not stat.S_ISREG(mode):
+        raise InvalidRequestError("output_path must be a regular file or a new file")
+    if destination.suffix.lstrip(
+        "."
+    ).lower() in supported_extensions and destination.is_relative_to(repo_root.resolve()):
+        raise InvalidRequestError("output_path must not overwrite a repository source file")
+    return destination
 
 
 @dataclass(frozen=True)

@@ -9,7 +9,10 @@ from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
 
+import anyio
 import pytest
+from mcp import types
+from mcp.shared.exceptions import McpError
 
 from repogpt.adapters.writers.artifact_writer import ArtifactWriter
 from repogpt.app.cli import main
@@ -24,7 +27,7 @@ from repogpt.domain.errors import (
     InvalidRequestError,
     UnsafeReplacementError,
 )
-from repogpt.mcp_server import handle_request
+from repogpt.mcp_server import create_server
 from repogpt.runtime import build_analyze_repo
 
 
@@ -270,26 +273,30 @@ def test_cli_and_mcp_distinguish_invalid_selection_and_unsafe_result(
     assert invalid.value.code == 2
     monkeypatch.setattr(sys, "argv", [*sys.argv, "--include-tests"])
     assert main() == 3
-    for include_tests in (False, True):
-        response = handle_request(
-            {
-                "jsonrpc": "2.0",
-                "id": "keep",
-                "method": "tools/call",
-                "params": {
-                    "name": "repogpt_emit_code_units",
-                    "arguments": {
+
+    async def execute(include_tests: bool) -> types.ServerResult:
+        server = create_server()
+        return await server.request_handlers[types.CallToolRequest](
+            types.CallToolRequest(
+                method="tools/call",
+                params=types.CallToolRequestParams(
+                    name="repogpt_export",
+                    arguments={
                         "repo_path": str(tmp_path),
+                        "output_path": str(tmp_path / "output.json"),
+                        "projection": "code-units",
                         "include_tests": include_tests,
                         "replace_scope": True,
                     },
-                },
-            }
+                ),
+            )
         )
-        assert response is not None
-        assert response["id"] == "keep"
-        if include_tests:
-            assert response["result"]["isError"] is True
-            assert "complete, non-empty" in response["result"]["content"][0]["text"]
-        else:
-            assert response["error"]["code"] == -32602
+
+    with pytest.raises(McpError) as invalid_mcp:
+        anyio.run(execute, False)
+    assert invalid_mcp.value.error.code == -32602
+    response = anyio.run(execute, True)
+    assert isinstance(response.root, types.CallToolResult)
+    assert response.root.isError
+    assert response.root.structuredContent is not None
+    assert "complete, non-empty" in response.root.structuredContent["error"]["message"]

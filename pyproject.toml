@@ -34,6 +34,9 @@ dependencies = [
   "structlog>=24.1.0",   # structured logging
 ]
 
+[project.optional-dependencies]
+mcp = ["mcp==1.28.1", "anyio==4.14.2", "jsonschema>=4.0"]
+
 [dependency-groups]
 dev = [
   "pytest>=7.0", 

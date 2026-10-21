@@ -8,7 +8,6 @@ from unittest.mock import patch
 import pytest
 
 from repogpt.domain.code_units import KIND, SCHEMA_VERSION
-from repogpt.mcp_server import tool_compare_profiles
 from repogpt.utils.retrieval_artifact import load_documents
 from repogpt.utils.retrieval_profiles import (
     assemble_flat_bundle,
@@ -46,8 +45,6 @@ def test_retrieval_rejects_invalid_envelope(tmp_path: Path, payload: Any) -> Non
     artifact.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError):
         load_documents(artifact)
-    with pytest.raises(ValueError):
-        tool_compare_profiles(str(artifact), "f")
 
 
 @pytest.mark.parametrize(
