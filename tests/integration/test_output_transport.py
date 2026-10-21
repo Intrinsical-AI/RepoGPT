@@ -128,7 +128,7 @@ def test_other_stdout_io_errors_keep_exit_code_3(tmp_path: Path, entrypoint: str
     assert destination.read_bytes() == b"previous"
 
 
-@pytest.mark.parametrize("stage", ["missing-parent", "permission", "replace"])
+@pytest.mark.parametrize("stage", ["missing-parent", "permission", "fsync", "replace"])
 def test_cli_write_failure_has_one_diagnostic_and_preserves_destination(
     tmp_path: Path, stage: str
 ) -> None:
@@ -141,7 +141,11 @@ def test_cli_write_failure_has_one_diagnostic_and_preserves_destination(
     command = [sys.executable, "-m", "repogpt.app.cli"]
     if stage != "missing-parent":
         output.write_bytes(b"previous artifact")
-        target = "tempfile.NamedTemporaryFile" if stage == "permission" else "os.replace"
+        target = {
+            "permission": "tempfile.NamedTemporaryFile",
+            "fsync": "os.fsync",
+            "replace": "os.replace",
+        }[stage]
         error = errno.EACCES if stage == "permission" else errno.EIO
         script = (
             "from unittest.mock import patch\n"

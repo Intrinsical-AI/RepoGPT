@@ -96,7 +96,7 @@ Notes:
 | `2` | Invalid arguments (no artifact), or per-file parse/decode failures with an emitted artifact. |
 | `3` | Invalid repository, collection/read/write failure, refused scope replacement, or internal consistency failure. |
 
-Parse/decode failures normally emit an artifact and return `2`, or `1` with `--fail-fast`. An explicit replacement request takes precedence: incomplete results return `3` without emitting an artifact. Collection and input-read failures also return `3` before any output. File output is written to a temporary file in the destination directory, then atomically replaced; a failed write preserves the prior artifact. Existing file permissions are retained, while new files follow the process umask.
+Parse/decode failures normally emit an artifact and return `2`, or `1` with `--fail-fast`. An explicit replacement request takes precedence: incomplete results return `3` without emitting an artifact. Collection and input-read failures also return `3` before any output. File output is written to a temporary file in the destination directory, flushed and synchronized with `fsync`, then atomically replaced; a failed write preserves the prior artifact. Existing file permissions are retained, while new files follow the process umask.
 
 Closing a pipe early, as with `repogpt ... --stdout | head -c 200`, returns `0` without a write-error diagnostic or shutdown traceback. This status acknowledges the consumer's early close; it does not certify delivery of a complete artifact or a complete analysis. Other output I/O errors return `3` with one destination-specific diagnostic.
 

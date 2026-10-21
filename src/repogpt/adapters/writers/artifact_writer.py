@@ -76,6 +76,7 @@ class ArtifactWriter:
                     digest.update(encoded)
                     size_bytes += len(encoded)
                 handle.flush()
+                os.fsync(handle.fileno())
             temporary_path.chmod(mode)
             os.replace(temporary_path, output_path)
         except OSError as exc:
