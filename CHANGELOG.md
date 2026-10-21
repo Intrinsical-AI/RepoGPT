@@ -1,7 +1,11 @@
 # Changelog
 
-## 0.11.0 (unreleased)
+## 0.11.0 (2026-10-21)
 
+- Atomic artifact writes synchronize temporary-file bytes with `fsync` before replacement. Synchronization failures preserve the prior artifact and remove temporary files.
+- Both distributions include the PEP 561 `py.typed` marker. The shared type-check gate covers `scripts/` and root `benchmark_*.py` helpers.
+- CI requires Python 3.10 through 3.14; Python 3.15 is experimental and non-blocking, with prereleases allowed and no support classifier. Workflow permissions are limited to `contents: read`.
+- The incompatible `audit/tools-20261004` snapshot at `8586131` is retired as the local `archive/audit-tools-20261004` branch. Preserve it for historical inspection; do not merge its different code-units v6 contract into this release line.
 - **Breaking artifact contracts:** AST v3 and code-units v6 replace their prior generations. Regenerate artifacts and update consumers together; the retrieval loader accepts v6 only. Schemas reject unknown fields throughout recursive nodes, failures, statistics, metadata, and parser-specific attributes and metrics.
 - AST import names are canonical in `dependencies`; remove `attributes.imported_names`. Links use `name`, `attributes.url`, and node `start_column`, without duplicate text/column attributes or link dependencies. Modules use `path`, without `attributes.relative_path`. Code-units metadata contains exactly `file`, `tags`, and `attributes`; per-document `repo_key`, `scope`, `snapshot_id`, and `source_id` remain.
 - MCP supports only protocol 2025-06-18 and returns native `structuredContent` plus identical compact JSON text. Inline AST NDJSON uses an object containing `schema_version`, `format`, and `records`. Tool discovery includes strict output schemas covering artifacts, receipts, and execution-error objects.
@@ -10,7 +14,7 @@
 - Python integration uses concrete module imports instead of package-level reexports. File/request fields and comment extraction use extension names consistently; CLI `--languages` and MCP `languages` remain unchanged. File models reject empty relative paths. Projectors use canonical paths, digest ordering, and statistics without redundant fallbacks or summary construction.
 - `make clean` uses a scoped helper for bytecode and pytest caches. `make distclean` additionally removes explicit root build/distribution/tool caches and root/`src` egg-info. Cleanup prunes named metadata and virtual environments of any name, never follows directory symlinks, and refuses protected removal trees before deleting anything.
 
-## 0.10.0 (unreleased)
+## 0.10.0 (not released separately; included in 0.11.0)
 
 - AST v2 derives node IDs from source origin and exports character-based `start_column`; syntax errors use relative paths and portable formatting.
 - Code-units v5 emits a residual module for every parsed file with exact `content_ranges`, resolves every container to an emitted ancestor, and keeps empty modules as structural nodes. Retrieval profiles v2 ignore blank modules and zero-score matches.
@@ -21,7 +25,7 @@
 - Python special methods such as `__init__` and `__repr__` have public visibility. Markdown inline links handle nested labels, escaped delimiters, balanced destinations, and optional titles without including titles in URL attributes.
 - MCP execution failures return JSON text `{"error":"message"}` with `isError: true`; successful and partial artifact payloads retain their existing shapes under protocol 2024-11-05.
 - CLI distinguishes input I/O and internal consistency diagnostics from output failures while preserving exit codes. Collection records non-regular files with the internal skip reason `non_regular_file`.
-- Development tools move from a published extra to the `dev` dependency group. CI validates Python 3.10 through 3.15.
+- Development tools move from a published extra to the `dev` dependency group.
 
 ## 0.9.0
 

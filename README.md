@@ -28,7 +28,7 @@ Key properties:
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for contract and architecture details, and [ROADMAP.md](ROADMAP.md) for future work only.
 
-The current source tree targets **0.11.0 (unreleased)**. AST v3 and code-units v6 are breaking contracts: regenerate exports and update consumers together. The retrieval loader accepts code-units v6 only.
+This source tree is **RepoGPT 0.11.0**. AST v3 and code-units v6 are breaking contracts: regenerate exports and update consumers together. The retrieval loader accepts code-units v6 only.
 
 ## Installation
 
