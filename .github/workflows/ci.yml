@@ -2,9 +2,13 @@ name: CI
 
 on: [push, pull_request]
 
+permissions:
+  contents: read
+
 jobs:
   quality:
     runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.python-version == '3.15' }}
     strategy:
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
@@ -14,6 +18,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          allow-prereleases: ${{ matrix.python-version == '3.15' }}
       - name: Setup uv
         uses: astral-sh/setup-uv@v5
       - name: Cache deps
@@ -21,6 +26,5 @@ jobs:
         with:
           path: |
             ~/.cache/uv
-            ~/.cache/pre-commit
           key: ${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
       - run: make validate
