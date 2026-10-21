@@ -6,7 +6,7 @@ lint:
 	uv run --locked --group dev ruff check .
 
 type:
-	uv run --locked --group dev mypy src tests
+	uv run --locked --group dev mypy src tests scripts benchmark_*.py
 
 test:
 	uv run --locked --group dev pytest -q

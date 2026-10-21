@@ -15,7 +15,7 @@ repos:
         always_run: true
       - id: mypy
         name: mypy (uv.lock)
-        entry: uv run --locked --group dev mypy src tests
+        entry: make type
         language: system
         pass_filenames: false
         always_run: true

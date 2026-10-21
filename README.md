@@ -352,6 +352,8 @@ Example STDERR from `repogpt tests/fixtures/cli_repo --stdout --include-tests` (
 
 Local hooks invoke the Ruff and Mypy versions in `uv.lock`; they do not install separate tool versions. Formatting is checked without modifying files. Hooks do not run `pytest`; `make validate` runs the locked environment sync, hooks, and full test suite, and is also the CI command.
 
+The Mypy hook delegates to `make type`, covering the package, tests, `scripts/`, and root `benchmark_*.py` helpers.
+
 Development tools belong to the `dev` dependency group and are not published as a package extra. CI requires `make validate` to pass on Python 3.10 through 3.14. Python 3.15 runs as a non-blocking experimental job with prereleases allowed.
 
 Setup and common commands:
@@ -368,7 +370,7 @@ uv run --locked --group dev pytest -q
 | Target | Command | Description |
 | --- | --- | --- |
 | `make lint` | `uv run --locked --group dev ruff check .` | Lint the codebase |
-| `make type` | `uv run --locked --group dev mypy src tests` | Run type checks |
+| `make type` | `uv run --locked --group dev mypy src tests scripts benchmark_*.py` | Run type checks |
 | `make test` | `uv run --locked --group dev pytest -q` | Run the test suite |
 | `make format` | `uv run --locked --group dev ruff format .` | Apply formatting |
 | `make validate` | locked sync, hooks, pytest | Run the local and CI gate |
