@@ -80,6 +80,16 @@ def main() -> int:
             repo_key=args.repo_key,
             replace_scope=args.replace_scope,
         )
+        if output_path is not None:
+            try:
+                output_path = file_output_path(
+                    str(output_path),
+                    repo_root=request.repo_root,
+                    supported_extensions=analyzer.parser_registry.supported_extensions(),
+                )
+            except OSError as exc:
+                log.error("output I/O error", error=str(exc))
+                return EXIT_OPERATIONAL_ERROR
         result, projection = analyzer.run(request)
     except UnsupportedExtensionsError as exc:
         parser.error(exc.message)
@@ -99,12 +109,6 @@ def main() -> int:
         return EXIT_OPERATIONAL_ERROR
 
     try:
-        if output_path is not None:
-            output_path = file_output_path(
-                str(output_path),
-                repo_root=request.repo_root,
-                supported_extensions=analyzer.parser_registry.supported_extensions(),
-            )
         ArtifactWriter().write(projection, output_path, format=request.format)
     except InvalidRequestError as exc:
         parser.error(str(exc))

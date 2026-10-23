@@ -6,7 +6,7 @@ import os
 import stat
 import sys
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, overload
@@ -60,6 +60,7 @@ class ArtifactWriter:
         output_path: Path,
         *,
         format: Literal["json", "ndjson"] = "json",
+        receipt_check: Callable[[ArtifactWriteReceipt], None] | None = None,
     ) -> ArtifactWriteReceipt: ...
 
     @overload
@@ -69,6 +70,7 @@ class ArtifactWriter:
         output_path: None,
         *,
         format: Literal["json", "ndjson"] = "json",
+        receipt_check: Callable[[ArtifactWriteReceipt], None] | None = None,
     ) -> None: ...
 
     def write(
@@ -77,7 +79,13 @@ class ArtifactWriter:
         output_path: Path | None,
         *,
         format: Literal["json", "ndjson"] = "json",
+        receipt_check: Callable[[ArtifactWriteReceipt], None] | None = None,
     ) -> ArtifactWriteReceipt | None:
+        """Publish synchronized bytes only after an optional receipt check succeeds.
+
+        A rejected file receipt preserves the destination and removes temporary
+        bytes. Standard output has no publication receipt.
+        """
         if output_path is None:
             self._write_stdout(projection, format)
             return None
@@ -109,6 +117,9 @@ class ArtifactWriter:
                     size_bytes += len(encoded)
                 handle.flush()
                 os.fsync(handle.fileno())
+            receipt = ArtifactWriteReceipt(size_bytes=size_bytes, sha256=digest.hexdigest())
+            if receipt_check is not None:
+                receipt_check(receipt)
             temporary_path.chmod(mode)
             os.replace(temporary_path, output_path)
         except OSError as exc:
@@ -118,7 +129,7 @@ class ArtifactWriter:
         finally:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
-        return ArtifactWriteReceipt(size_bytes=size_bytes, sha256=digest.hexdigest())
+        return receipt
 
     def _write_stdout(
         self,

@@ -28,7 +28,7 @@ Key properties:
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for contract and architecture details, and [ROADMAP.md](ROADMAP.md) for future work only.
 
-This source tree is **RepoGPT 0.11.0**. AST v3 and code-units v6 are breaking contracts: regenerate exports and update consumers together. The retrieval loader accepts code-units v6 only.
+This source tree is **RepoGPT 0.12.0**. AST v3 and code-units v6 are breaking contracts: regenerate exports and update consumers together. The retrieval loader accepts code-units v6 only.
 
 ## Installation
 
@@ -272,8 +272,11 @@ result includes structured content and identical compact JSON text.
 Partial analysis retains its artifact or receipt with `complete: false` and
 `isError: true`. Expected operational failures return
 `{"error":{"code":"operation_failed","message":"..."}}` with `isError: true`.
-Responses exceeding 256 KiB return an explicit `response_too_large` error; no
-canonical artifact is truncated. Export large artifacts to a file.
+The complete tool result is bounded to 256 KiB. Oversized export summaries
+retain `projection`, `schema_version`, `complete`, all publication receipt
+fields, and `details_truncated: true`. If this minimum receipt cannot fit,
+export refuses before replacing the destination. Other oversized responses
+return `response_too_large`; canonical artifact files retain their full bytes.
 
 The writer hashes exact UTF-8 bytes and atomically replaces its destination,
 retaining existing permissions. Missing parents are not created. Blank paths,

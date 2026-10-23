@@ -20,7 +20,11 @@ from mcp.server.stdio import stdio_server
 from mcp.shared.exceptions import McpError
 
 from repogpt import __version__
-from repogpt.adapters.writers.artifact_writer import ArtifactWriter, file_output_path
+from repogpt.adapters.writers.artifact_writer import (
+    ArtifactWriter,
+    ArtifactWriteReceipt,
+    file_output_path,
+)
 from repogpt.application.export_policy import REPO_KEY_PATTERN
 from repogpt.application.extensions import UnsupportedExtensionsError
 from repogpt.domain.analysis import AnalysisResult, AstProjection, CodeUnitsProjection
@@ -47,6 +51,10 @@ logger = logging.getLogger(__name__)
 class ToolOutcome:
     payload: dict[str, Any]
     is_error: bool = False
+
+
+class ResponseLimitError(Exception):
+    """A publication receipt cannot fit before any destination is changed."""
 
 
 def _analysis_payload(
@@ -134,15 +142,43 @@ def export(
         supported_extensions=analyzer.parser_registry.supported_extensions(),
     )
     result, artifact = analyzer.run(request)
-    receipt = ArtifactWriter().write(artifact, destination, format=format)
-    payload = {
-        **_analysis_payload(result, artifact),
+    summary = _analysis_payload(result, artifact)
+
+    def receipt_check(receipt: ArtifactWriteReceipt) -> None:
+        _export_outcome(summary, destination, format, receipt)
+
+    receipt = ArtifactWriter().write(
+        artifact, destination, format=format, receipt_check=receipt_check
+    )
+    return _export_outcome(summary, destination, format, receipt)
+
+
+def _export_outcome(
+    summary: dict[str, Any],
+    destination: Path,
+    format: Literal["json", "ndjson"],
+    receipt: ArtifactWriteReceipt,
+) -> ToolOutcome:
+    publication = {
         "output_path": str(destination),
         "format": format,
         "size_bytes": receipt.size_bytes,
         "sha256": receipt.sha256,
     }
-    return ToolOutcome(payload, is_error=not payload["complete"])
+    outcome = ToolOutcome({**summary, **publication}, is_error=not summary["complete"])
+    if _fits(outcome):
+        return outcome
+    outcome = ToolOutcome(
+        {
+            **{key: summary[key] for key in ("projection", "schema_version", "complete")},
+            **publication,
+            "details_truncated": True,
+        },
+        is_error=not summary["complete"],
+    )
+    if not _fits(outcome):
+        raise ResponseLimitError
+    return outcome
 
 
 def compare(artifact_path: str, query: str, top_k: int = 3) -> ToolOutcome:
@@ -191,15 +227,26 @@ def _analysis_schema(*, write: bool) -> dict[str, Any]:
             "failures_truncated": {"type": "boolean"},
         }
         if write:
-            properties.update(
-                {
-                    "output_path": {"type": "string", "minLength": 1},
-                    "format": {"enum": ["json", "ndjson"] if projection == "ast" else ["json"]},
-                    "size_bytes": {"type": "integer", "minimum": 0},
-                    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-                }
-            )
+            publication_properties: dict[str, Any] = {
+                "output_path": {"type": "string", "minLength": 1},
+                "format": {"enum": ["json", "ndjson"] if projection == "ast" else ["json"]},
+                "size_bytes": {"type": "integer", "minimum": 0},
+                "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+            }
+            properties.update(publication_properties)
             branches.append(_object(properties))
+            branches.append(
+                _object(
+                    {
+                        **{
+                            key: properties[key]
+                            for key in ("projection", "schema_version", "complete")
+                        },
+                        **publication_properties,
+                        "details_truncated": {"const": True},
+                    }
+                )
+            )
         else:
             branches.append(_object(properties))
             properties = dict(properties)
@@ -356,6 +403,25 @@ def _wire_result(outcome: ToolOutcome) -> types.CallToolResult:
     )
 
 
+def _fits(outcome: ToolOutcome) -> bool:
+    return (
+        len(_wire_result(outcome).model_dump_json(by_alias=True, exclude_none=True).encode("utf-8"))
+        <= MAX_RESPONSE_BYTES
+    )
+
+
+def _response_limit() -> ToolOutcome:
+    return ToolOutcome(
+        {
+            "error": {
+                "code": "response_too_large",
+                "message": "Response exceeds inline limit; use a summary or file export.",
+            }
+        },
+        is_error=True,
+    )
+
+
 def create_server() -> Server[Any, Any]:
     """Create an SDK server with one cancellation-safe blocking worker slot."""
     server: Server[Any, Any] = Server("repogpt", version=__version__)
@@ -382,6 +448,8 @@ def create_server() -> Server[Any, Any]:
             )
         except (InvalidRequestError, UnsupportedExtensionsError) as exc:
             raise McpError(types.ErrorData(code=-32602, message=str(exc))) from exc
+        except ResponseLimitError:
+            outcome = _response_limit()
         except (
             InvalidRepoError,
             CollectionFailure,
@@ -400,19 +468,8 @@ def create_server() -> Server[Any, Any]:
         try:
             spec.output_validator.validate(outcome.payload)
             result = _wire_result(outcome)
-            if (
-                len(result.model_dump_json(by_alias=True, exclude_none=True).encode("utf-8"))
-                > MAX_RESPONSE_BYTES
-            ):
-                outcome = ToolOutcome(
-                    {
-                        "error": {
-                            "code": "response_too_large",
-                            "message": "Response exceeds 256 KiB; use repogpt_export.",
-                        }
-                    },
-                    is_error=True,
-                )
+            if not _fits(outcome):
+                outcome = _response_limit()
                 spec.output_validator.validate(outcome.payload)
                 result = _wire_result(outcome)
         except Exception as exc:
@@ -452,6 +509,7 @@ async def serve() -> None:
 
 def main() -> int:
     configure_logging()
+    logging.getLogger("mcp").setLevel(logging.WARNING)
     for handler in logging.getLogger().handlers:
         handler.addFilter(SDKDiagnosticFilter())
     try:
