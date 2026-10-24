@@ -23,6 +23,10 @@ class UnsafeReplacementError(Exception):
     """Raised when analysis cannot satisfy an explicit scope replacement request."""
 
 
+class InvalidRetrievalArtifactError(ValueError):
+    """Raised when a retrieval input violates the native artifact contract."""
+
+
 @dataclass(frozen=True)
 class ParseFailure:
     message: str

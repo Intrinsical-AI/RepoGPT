@@ -1,6 +1,6 @@
 [project]
 name               = "repogpt"
-version            = "0.11.0"
+version            = "0.12.0"
 description        = "A consultable abstraction layer over any codebase: structured summaries and code intelligence for humans and LLM/RAG systems."
 readme             = "README.md"
 requires-python    = ">=3.10"
@@ -34,6 +34,9 @@ dependencies = [
   "structlog>=24.1.0",   # structured logging
 ]
 
+[project.optional-dependencies]
+mcp = ["mcp==1.28.1", "anyio==4.14.2", "jsonschema>=4.0"]
+
 [dependency-groups]
 dev = [
   "pytest>=7.0", 
@@ -52,7 +55,7 @@ dev = [
 
 [project.scripts]
 repogpt = "repogpt.app.cli:main"
-repogpt-mcp = "repogpt.mcp_server:main"
+repogpt-mcp = "repogpt.app.mcp_cli:main"
 
 [build-system]
 requires    = ["setuptools>=77.0.3"]

@@ -18,14 +18,14 @@ def validate_request(request: AnalysisRequest, supported_extensions: set[str]) -
     if request.projection == "code_units" and request.format != "json":
         raise InvalidRequestError("code-units only supports JSON")
     if request.replace_scope:
-        languages = (
+        extensions = (
             set(request.supported_extensions)
             if request.supported_extensions is not None
             else supported_extensions
         )
-        if languages != supported_extensions or not request.include_tests:
+        if extensions != supported_extensions or not request.include_tests:
             raise InvalidRequestError(
-                "replace_scope requires all supported languages and include_tests=true"
+                "replace_scope requires all supported extensions and include_tests=true"
             )
 
 

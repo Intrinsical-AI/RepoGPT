@@ -6,14 +6,13 @@ from pathlib import Path
 
 import structlog
 
-from repogpt.adapters.writers.artifact_writer import ArtifactWriter
+from repogpt.adapters.writers.artifact_writer import ArtifactWriter, file_output_path
 from repogpt.application.exit_codes import (
     EXIT_OPERATIONAL_ERROR,
     EXIT_SUCCESS,
     exit_code_for_result,
 )
-from repogpt.application.extensions import UnsupportedExtensionsError, parse_cli_extensions
-from repogpt.domain.analysis import AnalysisRequest
+from repogpt.application.extensions import UnsupportedExtensionsError
 from repogpt.domain.errors import (
     ArtifactConsistencyError,
     CollectionFailure,
@@ -43,7 +42,7 @@ def main() -> int:
     output = parser.add_mutually_exclusive_group()
     output.add_argument("--stdout", action="store_true")
     output.add_argument("-o", "--output")
-    parser.add_argument("--languages")
+    parser.add_argument("--extensions")
     parser.add_argument("--emit", choices=["ast", "code-units"], default="ast")
     parser.add_argument("--log-level", choices=["INFO", "DEBUG"], default="INFO")
     parser.add_argument("--fail-fast", action="store_true")
@@ -65,31 +64,35 @@ def main() -> int:
     log = structlog.get_logger()
     analyzer = build_analyze_repo()
 
-    try:
-        langs = parse_cli_extensions(
-            args.languages,
-            supported_extensions=analyzer.parser_registry.supported_extensions(),
-        )
-    except UnsupportedExtensionsError as exc:
-        parser.error(exc.message)
     to_stdout = bool(args.stdout or (args.output and Path(args.output).as_posix() == "/dev/stdout"))
     default_output = "code_units.json" if args.emit == "code-units" else "analysis.json"
     output_path = None if to_stdout else Path(args.output or default_output)
 
-    request = AnalysisRequest(
-        repo_root=Path(args.repo_path),
-        include_tests=args.include_tests,
-        supported_extensions=langs,
-        projection="code_units" if args.emit == "code-units" else "ast",
-        format=args.format,
-        flatten_kind=flatten or "node",
-        fail_fast=args.fail_fast,
-        repo_key=args.repo_key,
-        replace_scope=args.replace_scope,
-    )
-
     try:
+        request = analyzer.request(
+            repo_path=args.repo_path,
+            projection=args.emit,
+            include_tests=args.include_tests,
+            extensions=None if args.extensions is None else args.extensions.split(","),
+            format=args.format,
+            flatten=flatten or "node",
+            fail_fast=args.fail_fast,
+            repo_key=args.repo_key,
+            replace_scope=args.replace_scope,
+        )
+        if output_path is not None:
+            try:
+                output_path = file_output_path(
+                    str(output_path),
+                    repo_root=request.repo_root,
+                    supported_extensions=analyzer.parser_registry.supported_extensions(),
+                )
+            except OSError as exc:
+                log.error("output I/O error", error=str(exc))
+                return EXIT_OPERATIONAL_ERROR
         result, projection = analyzer.run(request)
+    except UnsupportedExtensionsError as exc:
+        parser.error(exc.message)
     except InvalidRequestError as exc:
         parser.error(str(exc))
     except InvalidRepoError as exc:
@@ -107,6 +110,8 @@ def main() -> int:
 
     try:
         ArtifactWriter().write(projection, output_path, format=request.format)
+    except InvalidRequestError as exc:
+        parser.error(str(exc))
     except OSError as exc:
         if output_path is None:
             silence_failed_stdout()

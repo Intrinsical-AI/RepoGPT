@@ -1,446 +1,541 @@
-"""MCP server for RepoGPT artifact emission and profile comparison."""
+"""Native optional SDK transport over RepoGPT application and writer operations."""
 
 from __future__ import annotations
 
 import json
-import stat
+import logging
 import sys
+from collections.abc import Callable
+from dataclasses import dataclass
+from functools import partial
 from importlib.resources import files
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
-import structlog
+import anyio
+from jsonschema import Draft202012Validator, ValidationError
+from mcp import types
+from mcp.server.lowlevel import Server
+from mcp.server.stdio import stdio_server
+from mcp.shared.exceptions import McpError
 
 from repogpt import __version__
-from repogpt.adapters.projectors.ast_projector import SCHEMA_VERSION as AST_SCHEMA_VERSION
-from repogpt.adapters.writers.artifact_writer import ArtifactWriter
+from repogpt.adapters.writers.artifact_writer import (
+    ArtifactWriter,
+    ArtifactWriteReceipt,
+    file_output_path,
+)
 from repogpt.application.export_policy import REPO_KEY_PATTERN
-from repogpt.application.extensions import UnsupportedExtensionsError, normalize_extension_filter
-from repogpt.domain.analysis import AnalysisRequest, AstProjection
-from repogpt.domain.code_units import SCHEMA_VERSION as CODE_UNITS_SCHEMA_VERSION
-from repogpt.domain.errors import InvalidRequestError
+from repogpt.application.extensions import UnsupportedExtensionsError
+from repogpt.domain.analysis import AnalysisResult, AstProjection, CodeUnitsProjection
+from repogpt.domain.errors import (
+    ArtifactConsistencyError,
+    CollectionFailure,
+    InvalidRepoError,
+    InvalidRequestError,
+    InvalidRetrievalArtifactError,
+    UnsafeReplacementError,
+)
 from repogpt.logging_config import configure_logging
 from repogpt.runtime import build_analyze_repo
 from repogpt.stdio import silence_failed_stdout
 from repogpt.utils.retrieval_artifact import load_documents
-from repogpt.utils.retrieval_profiles import (
-    FLAT_PROFILE,
-    STRUCTURED_PROFILE,
-    compare_profiles,
-    validate_top_k,
-)
+from repogpt.utils.retrieval_profiles import FLAT_PROFILE, STRUCTURED_PROFILE, compare_profiles
 
-logger = structlog.get_logger(__name__)
+MAX_RESPONSE_BYTES = 256 * 1024
+MAX_FAILURE_SUMMARY_BYTES = 64 * 1024
+logger = logging.getLogger(__name__)
 
 
-def _result(payload: dict[str, Any], *, is_error: bool) -> dict[str, Any]:
+@dataclass(frozen=True)
+class ToolOutcome:
+    payload: dict[str, Any]
+    is_error: bool = False
+
+
+class ResponseLimitError(Exception):
+    """A publication receipt cannot fit before any destination is changed."""
+
+
+def _analysis_payload(
+    result: AnalysisResult, artifact: AstProjection | CodeUnitsProjection
+) -> dict[str, Any]:
+    payload = artifact.json_payload
+    failures: list[dict[str, Any]] = []
+    failure_bytes = 0
+    for failure in payload["failures"]:
+        encoded_size = len(json.dumps(failure, ensure_ascii=False, allow_nan=False).encode("utf-8"))
+        if failure_bytes + encoded_size > MAX_FAILURE_SUMMARY_BYTES:
+            break
+        failures.append(failure)
+        failure_bytes += encoded_size
+    complete = not (
+        result.stopped_early
+        or result.stats.failed_files
+        or any(item.reason in {"file_too_large", "binary_file"} for item in result.skipped_files)
+    )
     return {
-        "content": [
-            {
-                "type": "text",
-                "text": json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-            }
-        ],
-        "structuredContent": payload,
-        "isError": is_error,
+        "projection": "ast" if isinstance(artifact, AstProjection) else "code-units",
+        "schema_version": payload["schema_version"],
+        "complete": complete,
+        "stats": payload["stats"],
+        "failures": failures,
+        "failure_count": len(payload["failures"]),
+        "failures_truncated": len(failures) != len(payload["failures"]),
     }
 
 
-def _file_output_path(value: str) -> Path:
-    if not value.strip() or value in {"-", "/dev/stdin", "/dev/stdout", "/dev/stderr"}:
-        raise InvalidRequestError("output_path must name an artifact file, not standard I/O")
-    candidate = Path(value)
-    # Resolve directories without following a leaf symlink into its target.
-    output_path = candidate.parent.resolve(strict=True) / candidate.name
-    try:
-        mode = output_path.lstat().st_mode
-    except FileNotFoundError:
-        return output_path
-    if not stat.S_ISREG(mode):
-        raise InvalidRequestError("output_path must be a regular file or a new file")
-    return output_path
-
-
-def _run_repogpt_analysis(
-    *,
-    emit: Literal["ast", "code-units"],
+def analyze(
     repo_path: str,
-    include_tests: bool,
-    languages: list[str] | None,
-    fail_fast: bool,
-    repo_key: str | None = None,
-    replace_scope: bool = False,
-    flatten: Literal["node", "file"] = "node",
-    fmt: Literal["json", "ndjson"] = "json",
-    output_path: str | None = None,
-) -> dict[str, Any]:
-    destination = _file_output_path(output_path) if output_path is not None else None
-    analyzer = build_analyze_repo()
-    supported_extensions = analyzer.parser_registry.supported_extensions()
-    request = AnalysisRequest(
-        repo_root=Path(repo_path),
-        include_tests=include_tests,
-        supported_extensions=normalize_extension_filter(
-            languages,
-            supported_extensions=supported_extensions,
-        ),
-        projection="code_units" if emit == "code-units" else "ast",
-        format=fmt,
-        flatten_kind=flatten,
-        fail_fast=fail_fast,
-        repo_key=repo_key,
-        replace_scope=replace_scope,
-    )
-    if (
-        destination is not None
-        and destination.suffix.lstrip(".").lower() in supported_extensions
-        and destination.is_relative_to(request.repo_root.resolve())
-        and destination.exists()
-    ):
-        # Selection filters and fail-fast can leave source files out of parsed_files.
-        raise InvalidRequestError("output_path must not overwrite a repository source file")
-    result, projection = analyzer.run(request)
-    artifact: dict[str, Any]
-    if destination is not None:
-        receipt = ArtifactWriter().write(projection, destination, format=fmt)
-        artifact = {
-            "output_path": str(destination),
-            "format": fmt,
-            "schema_version": projection.json_payload["schema_version"],
-            "size_bytes": receipt.size_bytes,
-            "sha256": receipt.sha256,
-            "stats": projection.json_payload["stats"],
-        }
-    elif fmt == "json":
-        artifact = projection.json_payload
-    else:
-        artifact = {
-            "schema_version": projection.json_payload["schema_version"],
-            "format": "ndjson",
-            "records": cast(AstProjection, projection).ndjson_records,
-        }
-
-    return _result(artifact, is_error=result.stats.failed_files > 0)
-
-
-def tool_emit_code_units(
-    repo_path: str,
+    projection: Literal["ast", "code-units"] = "ast",
+    response_mode: Literal["summary", "inline"] = "summary",
     include_tests: bool = False,
-    languages: list[str] | None = None,
+    extensions: list[str] | None = None,
     fail_fast: bool = False,
     repo_key: str | None = None,
-    replace_scope: bool = False,
-    output_path: str | None = None,
-) -> dict[str, Any]:
-    return _run_repogpt_analysis(
-        emit="code-units",
+    flatten: Literal["node", "file"] = "node",
+) -> ToolOutcome:
+    analyzer = build_analyze_repo()
+    request = analyzer.request(
         repo_path=repo_path,
+        projection=projection,
         include_tests=include_tests,
-        languages=languages,
+        extensions=extensions,
         fail_fast=fail_fast,
         repo_key=repo_key,
-        replace_scope=replace_scope,
-        output_path=output_path,
+        flatten=flatten,
     )
+    result, artifact = analyzer.run(request)
+    payload = _analysis_payload(result, artifact)
+    if response_mode == "inline":
+        payload["artifact"] = artifact.json_payload
+    return ToolOutcome(payload, is_error=not payload["complete"])
 
 
-def tool_emit_ast(
+def export(
     repo_path: str,
-    flatten: Literal["node", "file"] = "node",
+    output_path: str,
+    projection: Literal["ast", "code-units"] = "ast",
     format: Literal["json", "ndjson"] = "json",
     include_tests: bool = False,
-    languages: list[str] | None = None,
+    extensions: list[str] | None = None,
     fail_fast: bool = False,
-    output_path: str | None = None,
-) -> dict[str, Any]:
-    return _run_repogpt_analysis(
-        emit="ast",
+    repo_key: str | None = None,
+    replace_scope: bool = False,
+    flatten: Literal["node", "file"] = "node",
+) -> ToolOutcome:
+    analyzer = build_analyze_repo()
+    request = analyzer.request(
         repo_path=repo_path,
+        projection=projection,
         include_tests=include_tests,
-        languages=languages,
+        extensions=extensions,
         fail_fast=fail_fast,
+        repo_key=repo_key,
+        replace_scope=replace_scope,
         flatten=flatten,
-        fmt=format,
-        output_path=output_path,
+        format=format,
     )
+    destination = file_output_path(
+        output_path,
+        repo_root=request.repo_root,
+        supported_extensions=analyzer.parser_registry.supported_extensions(),
+    )
+    result, artifact = analyzer.run(request)
+    summary = _analysis_payload(result, artifact)
+
+    def receipt_check(receipt: ArtifactWriteReceipt) -> None:
+        _export_outcome(summary, destination, format, receipt)
+
+    receipt = ArtifactWriter().write(
+        artifact, destination, format=format, receipt_check=receipt_check
+    )
+    return _export_outcome(summary, destination, format, receipt)
 
 
-def tool_compare_profiles(artifact_path: str, query: str, top_k: int = 3) -> dict[str, Any]:
+def _export_outcome(
+    summary: dict[str, Any],
+    destination: Path,
+    format: Literal["json", "ndjson"],
+    receipt: ArtifactWriteReceipt,
+) -> ToolOutcome:
+    publication = {
+        "output_path": str(destination),
+        "format": format,
+        "size_bytes": receipt.size_bytes,
+        "sha256": receipt.sha256,
+    }
+    outcome = ToolOutcome({**summary, **publication}, is_error=not summary["complete"])
+    if _fits(outcome):
+        return outcome
+    outcome = ToolOutcome(
+        {
+            **{key: summary[key] for key in ("projection", "schema_version", "complete")},
+            **publication,
+            "details_truncated": True,
+        },
+        is_error=not summary["complete"],
+    )
+    if not _fits(outcome):
+        raise ResponseLimitError
+    return outcome
+
+
+def compare(artifact_path: str, query: str, top_k: int = 3) -> ToolOutcome:
     try:
-        validate_top_k(top_k)
+        return ToolOutcome(
+            compare_profiles(load_documents(Path(artifact_path)), query_text=query, top_k=top_k)
+        )
     except ValueError as exc:
-        raise InvalidRequestError(str(exc)) from exc
-    documents = load_documents(Path(artifact_path))
-    return _result(compare_profiles(documents, query_text=query, top_k=top_k), is_error=False)
+        raise InvalidRetrievalArtifactError(str(exc)) from exc
 
 
-def _object_schema(properties: dict[str, Any]) -> dict[str, Any]:
+def _object(properties: dict[str, Any], *, required: list[str] | None = None) -> dict[str, Any]:
     return {
         "type": "object",
         "properties": properties,
-        "required": list(properties),
+        "required": list(properties) if required is None else required,
         "additionalProperties": False,
     }
 
 
-def _error_schema() -> dict[str, Any]:
-    return _object_schema({"error": {"type": "string"}})
+ERROR_SCHEMA = _object(
+    {"error": _object({"code": {"type": "string"}, "message": {"type": "string"}})}
+)
 
 
-def _artifact_output_schema(emit: Literal["ast", "code-units"]) -> dict[str, Any]:
-    version = AST_SCHEMA_VERSION if emit == "ast" else CODE_UNITS_SCHEMA_VERSION
-    source: dict[str, Any] = json.loads(
-        files("repogpt")
-        .joinpath("schemas")
-        .joinpath(f"{emit}-v{version}.schema.json")
-        .read_text(encoding="utf-8")
-    )
-    branches: list[dict[str, Any]]
-    if emit == "ast":
-        branches = [
-            {"$ref": "#/$defs/envelope"},
-            _object_schema(
-                {
-                    "schema_version": {"const": version},
-                    "format": {"const": "ndjson"},
-                    "records": {
-                        "type": "array",
-                        "items": {
-                            "anyOf": [
-                                {"$ref": f"#/$defs/{name}"}
-                                for name in ("nodeRecord", "failureRecord", "summaryRecord")
-                            ]
+def _analysis_schema(*, write: bool) -> dict[str, Any]:
+    branches: list[dict[str, Any]] = []
+    definitions: dict[str, Any] = {}
+    for projection, version in (("ast", "3"), ("code-units", "6")):
+        source = json.loads(
+            files("repogpt")
+            .joinpath("schemas")
+            .joinpath(f"{projection}-v{version}.schema.json")
+            .read_text(encoding="utf-8")
+        )
+        prefix = "ast_" if projection == "ast" else "code_"
+        source = json.loads(json.dumps(source).replace("#/$defs/", f"#/$defs/{prefix}"))
+        definitions.update({prefix + name: spec for name, spec in source["$defs"].items()})
+        properties: dict[str, Any] = {
+            "projection": {"const": projection},
+            "schema_version": {"const": version},
+            "complete": {"type": "boolean"},
+            "stats": {"$ref": f"#/$defs/{prefix}stats"},
+            "failures": {"type": "array", "items": {"$ref": f"#/$defs/{prefix}failureRecord"}},
+            "failure_count": {"type": "integer", "minimum": 0},
+            "failures_truncated": {"type": "boolean"},
+        }
+        if write:
+            publication_properties: dict[str, Any] = {
+                "output_path": {"type": "string", "minLength": 1},
+                "format": {"enum": ["json", "ndjson"] if projection == "ast" else ["json"]},
+                "size_bytes": {"type": "integer", "minimum": 0},
+                "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+            }
+            properties.update(publication_properties)
+            branches.append(_object(properties))
+            branches.append(
+                _object(
+                    {
+                        **{
+                            key: properties[key]
+                            for key in ("projection", "schema_version", "complete")
                         },
-                    },
+                        **publication_properties,
+                        "details_truncated": {"const": True},
+                    }
+                )
+            )
+        else:
+            branches.append(_object(properties))
+            properties = dict(properties)
+            properties["artifact"] = (
+                {"$ref": "#/$defs/ast_envelope"}
+                if projection == "ast"
+                else {
+                    key: value
+                    for key, value in source.items()
+                    if key not in {"$defs", "$id", "$schema"}
                 }
-            ),
-        ]
-    else:
-        branches = [
-            {key: value for key, value in source.items() if key not in {"$defs", "$schema", "$id"}}
-        ]
-    branches.extend(
-        [
-            _object_schema(
-                {
-                    "output_path": {"type": "string", "minLength": 1},
-                    "format": {"enum": ["json", "ndjson"] if emit == "ast" else ["json"]},
-                    "schema_version": {"const": version},
-                    "size_bytes": {"type": "integer", "minimum": 0},
-                    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
-                    "stats": {"$ref": "#/$defs/stats"},
-                }
-            ),
-            _error_schema(),
-        ]
-    )
-    return {"type": "object", "$defs": source["$defs"], "oneOf": branches}
+            )
+            branches.append(_object(properties))
+    return {"type": "object", "$defs": definitions, "oneOf": [*branches, ERROR_SCHEMA]}
 
 
-def _comparison_output_schema() -> dict[str, Any]:
-    profile = _object_schema(
+def _comparison_schema() -> dict[str, Any]:
+    count = {"type": "integer", "minimum": 0}
+    profile = _object(
         {
-            "seed_count": {"type": "integer", "minimum": 0},
-            "expanded_count": {"type": "integer", "minimum": 0},
-            "estimated_tokens": {"type": "integer", "minimum": 0},
-            "context_characters": {"type": "integer", "minimum": 0},
-            "context_segment_count": {"type": "integer", "minimum": 0},
+            **dict.fromkeys(
+                (
+                    "seed_count",
+                    "expanded_count",
+                    "estimated_tokens",
+                    "context_characters",
+                    "context_segment_count",
+                ),
+                count,
+            ),
             "external_ids": {"type": "array", "items": {"type": "string"}},
         }
     )
     return {
         "type": "object",
         "oneOf": [
-            _object_schema(
+            _object(
                 {
                     "query_text": {"type": "string"},
-                    "top_k": {"type": "integer", "minimum": 0},
+                    "top_k": count,
                     FLAT_PROFILE: profile,
                     STRUCTURED_PROFILE: profile,
                 }
             ),
-            _error_schema(),
+            ERROR_SCHEMA,
         ],
     }
 
 
-TOOLS: dict[str, dict[str, Any]] = {
-    "repogpt_emit_code_units": {
-        "description": "Emit RepoGPT code-units v6 inline or atomically replace an output file.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "repo_path": {"type": "string"},
-                "include_tests": {"type": "boolean"},
-                "languages": {"type": "array", "items": {"type": "string"}},
-                "fail_fast": {"type": "boolean"},
-                "repo_key": {"type": "string", "pattern": "^" + REPO_KEY_PATTERN + "$"},
-                "replace_scope": {"type": "boolean", "default": False},
-                "output_path": {"type": "string"},
+@dataclass(frozen=True)
+class ToolSpec:
+    tool: types.Tool
+    handler: Callable[..., ToolOutcome]
+    input_validator: Draft202012Validator
+    output_validator: Draft202012Validator
+
+
+def _spec(
+    name: str,
+    description: str,
+    inputs: dict[str, Any],
+    outputs: dict[str, Any],
+    handler: Callable[..., ToolOutcome],
+    *,
+    write: bool = False,
+) -> ToolSpec:
+    Draft202012Validator.check_schema(inputs)
+    Draft202012Validator.check_schema(outputs)
+    return ToolSpec(
+        types.Tool(
+            name=name,
+            description=description,
+            inputSchema=inputs,
+            outputSchema=outputs,
+            annotations=types.ToolAnnotations(
+                readOnlyHint=not write, destructiveHint=write, openWorldHint=False
+            ),
+        ),
+        handler,
+        Draft202012Validator(inputs),
+        Draft202012Validator(outputs),
+    )
+
+
+_PATH = {"type": "string", "minLength": 1, "pattern": "\\S"}
+_ANALYSIS_INPUTS: dict[str, Any] = {
+    "repo_path": _PATH,
+    "projection": {"enum": ["ast", "code-units"], "default": "ast"},
+    "include_tests": {"type": "boolean", "default": False},
+    "extensions": {"type": "array", "items": {"type": "string"}},
+    "fail_fast": {"type": "boolean", "default": False},
+    "repo_key": {"type": "string", "pattern": "^" + REPO_KEY_PATTERN + "$"},
+    "flatten": {"enum": ["node", "file"], "default": "node"},
+}
+TOOLS = {
+    "repogpt_analyze": _spec(
+        "repogpt_analyze",
+        "Analyze a repository without writes; return a summary or bounded native artifact.",
+        _object(
+            {
+                **_ANALYSIS_INPUTS,
+                "response_mode": {"enum": ["summary", "inline"], "default": "summary"},
             },
-            "required": ["repo_path"],
-            "additionalProperties": False,
-        },
-        "output_schema": _artifact_output_schema("code-units"),
-        "annotations": {"readOnlyHint": False, "destructiveHint": True},
-        "handler": tool_emit_code_units,
-    },
-    "repogpt_emit_ast": {
-        "description": "Emit AST v3 inline or atomically replace a JSON/NDJSON output file.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "repo_path": {"type": "string"},
-                "flatten": {"type": "string", "enum": ["node", "file"]},
-                "format": {"type": "string", "enum": ["json", "ndjson"]},
-                "include_tests": {"type": "boolean"},
-                "languages": {"type": "array", "items": {"type": "string"}},
-                "fail_fast": {"type": "boolean"},
-                "output_path": {"type": "string"},
-            },
-            "required": ["repo_path"],
-            "additionalProperties": False,
-        },
-        "output_schema": _artifact_output_schema("ast"),
-        "annotations": {"readOnlyHint": False, "destructiveHint": True},
-        "handler": tool_emit_ast,
-    },
-    "repogpt_compare_profiles": {
-        "description": "Compare flat and structured retrieval bundles over a code-units artifact.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "artifact_path": {"type": "string"},
+            required=["repo_path"],
+        ),
+        _analysis_schema(write=False),
+        analyze,
+    ),
+    "repogpt_compare_profiles": _spec(
+        "repogpt_compare_profiles",
+        "Compare native flat and structured retrieval profiles over a code-units artifact.",
+        _object(
+            {
+                "artifact_path": _PATH,
                 "query": {"type": "string"},
                 "top_k": {"type": "integer", "minimum": 0, "default": 3},
             },
-            "required": ["artifact_path", "query"],
-            "additionalProperties": False,
-        },
-        "output_schema": _comparison_output_schema(),
-        "annotations": {"readOnlyHint": True},
-        "handler": tool_compare_profiles,
-    },
+            required=["artifact_path", "query"],
+        ),
+        _comparison_schema(),
+        compare,
+    ),
+    "repogpt_export": _spec(
+        "repogpt_export",
+        "Analyze and atomically publish a native artifact at an explicit destination.",
+        _object(
+            {
+                **_ANALYSIS_INPUTS,
+                "output_path": _PATH,
+                "format": {"enum": ["json", "ndjson"], "default": "json"},
+                "replace_scope": {"type": "boolean", "default": False},
+            },
+            required=["repo_path", "output_path"],
+        ),
+        _analysis_schema(write=True),
+        export,
+        write=True,
+    ),
 }
 
 
-def _error(req_id: str | int | None, code: int, message: str) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
-
-
-def _validate_arguments(arguments: dict[str, Any], schema: dict[str, Any]) -> None:
-    """Check wire fields/types; handlers apply the shared semantic policies."""
-    properties = schema["properties"]
-    missing = set(schema.get("required", [])) - arguments.keys()
-    unknown = arguments.keys() - properties.keys()
-    if missing or unknown:
-        raise InvalidRequestError(
-            f"invalid argument fields: missing={sorted(missing)}, unknown={sorted(unknown)}"
-        )
-    for name, value in arguments.items():
-        definition = properties[name]
-        kind = definition["type"]
-        valid_type = (
-            (kind == "boolean" and type(value) is bool)
-            or (kind == "integer" and type(value) is int)
-            or (kind == "string" and isinstance(value, str))
-            or (
-                kind == "array"
-                and isinstance(value, list)
-                and all(isinstance(item, str) for item in value)
+def _wire_result(outcome: ToolOutcome) -> types.CallToolResult:
+    return types.CallToolResult(
+        content=[
+            types.TextContent(
+                type="text",
+                text=json.dumps(
+                    outcome.payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+                ),
             )
+        ],
+        structuredContent=outcome.payload,
+        isError=outcome.is_error,
+    )
+
+
+def _fits(outcome: ToolOutcome) -> bool:
+    return (
+        len(_wire_result(outcome).model_dump_json(by_alias=True, exclude_none=True).encode("utf-8"))
+        <= MAX_RESPONSE_BYTES
+    )
+
+
+def _response_limit() -> ToolOutcome:
+    return ToolOutcome(
+        {
+            "error": {
+                "code": "response_too_large",
+                "message": "Response exceeds inline limit; use a summary or file export.",
+            }
+        },
+        is_error=True,
+    )
+
+
+def create_server() -> Server[Any, Any]:
+    """Create an SDK server with one cancellation-safe blocking worker slot."""
+    server: Server[Any, Any] = Server("repogpt", version=__version__)
+    limiter = anyio.CapacityLimiter(1)
+
+    async def list_tools(_: types.ListToolsRequest) -> types.ServerResult:
+        return types.ServerResult(
+            types.ListToolsResult(tools=[spec.tool for spec in TOOLS.values()])
         )
-        if not valid_type:
-            raise InvalidRequestError(f"{name} must be {kind}")
-        if "enum" in definition and value not in definition["enum"]:
-            raise InvalidRequestError(f"{name} must be one of {definition['enum']}")
-        if "minimum" in definition and value < definition["minimum"]:
-            raise InvalidRequestError(f"{name} must be >= {definition['minimum']}")
-        if name in {"repo_path", "artifact_path", "output_path"} and not value.strip():
-            raise InvalidRequestError(f"{name} must not be blank")
 
-
-def handle_request(request: object) -> dict[str, Any] | None:
-    if not isinstance(request, dict):
-        return _error(None, -32600, "request must be an object")
-    req_id = request.get("id")
-    valid_id = type(req_id) in {str, int}
-    if request.get("jsonrpc") != "2.0" or not isinstance(request.get("method"), str):
-        return _error(req_id if valid_id else None, -32600, "invalid JSON-RPC envelope")
-    if "id" not in request:
-        # Notifications never produce responses or invoke request-only tools.
-        return None
-    if not valid_id:
-        return _error(None, -32600, "id must be a string or integer")
-    method = request["method"]
-    params = request.get("params", {})
-    if not isinstance(params, dict):
-        return _error(req_id, -32602, "params must be an object")
-    result: dict[str, Any]
-    if method == "initialize":
-        result = {
-            "protocolVersion": "2025-06-18",
-            "serverInfo": {"name": "repogpt", "version": __version__},
-            "capabilities": {"tools": {}},
-        }
-    elif method == "ping":
-        result = {}
-    elif method == "tools/list":
-        result = {
-            "tools": [
-                {
-                    "name": name,
-                    "description": spec["description"],
-                    "inputSchema": spec["input_schema"],
-                    "outputSchema": spec["output_schema"],
-                    "annotations": spec["annotations"],
-                }
-                for name, spec in TOOLS.items()
-            ]
-        }
-    elif method == "tools/call":
-        tool_name = params.get("name")
-        if not isinstance(tool_name, str) or tool_name not in TOOLS:
-            return _error(req_id, -32602, f"Unknown tool: {tool_name}")
-        tool_args = params.get("arguments", {})
-        if not isinstance(tool_args, dict):
-            return _error(req_id, -32602, "tool arguments must be an object")
+    async def call_tool(request: types.CallToolRequest) -> types.ServerResult:
+        spec = TOOLS.get(request.params.name)
+        if spec is None:
+            raise McpError(types.ErrorData(code=-32602, message="Unknown tool"))
         try:
-            _validate_arguments(tool_args, TOOLS[tool_name]["input_schema"])
-            result = TOOLS[tool_name]["handler"](**tool_args)
+            spec.input_validator.validate(request.params.arguments or {})
+        except ValidationError as exc:
+            raise McpError(types.ErrorData(code=-32602, message="Invalid tool arguments")) from exc
+        try:
+            outcome = await anyio.to_thread.run_sync(
+                partial(spec.handler, **(request.params.arguments or {})),
+                limiter=limiter,
+                abandon_on_cancel=False,
+            )
         except (InvalidRequestError, UnsupportedExtensionsError) as exc:
-            return _error(req_id, -32602, str(exc))
+            raise McpError(types.ErrorData(code=-32602, message=str(exc))) from exc
+        except ResponseLimitError:
+            outcome = _response_limit()
+        except (
+            InvalidRepoError,
+            CollectionFailure,
+            UnsafeReplacementError,
+            ArtifactConsistencyError,
+            OSError,
+            InvalidRetrievalArtifactError,
+        ) as exc:
+            outcome = ToolOutcome(
+                {"error": {"code": "operation_failed", "message": str(exc)}}, is_error=True
+            )
         except Exception as exc:
-            # A tool failure must not kill the stdio session.
-            logger.error("tool error", tool=tool_name, error=str(exc))
-            result = _result({"error": str(exc)}, is_error=True)
-    else:
-        return _error(req_id, -32601, f"Unknown method: {method}")
-    return {"jsonrpc": "2.0", "id": req_id, "result": result}
+            # The transport trust boundary must never expose arbitrary exception data.
+            logger.error("tool_internal_error exception_type=%s", type(exc).__name__)
+            raise McpError(types.ErrorData(code=-32603, message="Internal tool error")) from exc
+        try:
+            spec.output_validator.validate(outcome.payload)
+            result = _wire_result(outcome)
+            if not _fits(outcome):
+                outcome = _response_limit()
+                spec.output_validator.validate(outcome.payload)
+                result = _wire_result(outcome)
+        except Exception as exc:
+            logger.error("tool_output_error exception_type=%s", type(exc).__name__)
+            raise McpError(types.ErrorData(code=-32603, message="Internal tool error")) from exc
+        return types.ServerResult(result)
+
+    # SDK @call_tool catches arbitrary exceptions and skips output validation
+    # for explicit CallToolResult values. Register guarded handlers directly.
+    server.request_handlers[types.ListToolsRequest] = list_tools
+    server.request_handlers[types.CallToolRequest] = call_tool
+    return server
+
+
+class SDKDiagnosticFilter(logging.Filter):
+    """Remove payloads and tracebacks from SDK diagnostics, including root calls."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if (
+            record.name == "mcp"
+            or record.name.startswith("mcp.")
+            or "/mcp/" in record.pathname.replace("\\", "/")
+        ):
+            record.msg = "MCP diagnostic (%s)"
+            record.args = (record.levelname,)
+            record.exc_info = None
+            record.exc_text = None
+            record.stack_info = None
+        return True
+
+
+async def serve() -> None:
+    server = create_server()
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(read_stream, write_stream, server.create_initialization_options())
 
 
 def main() -> int:
     configure_logging()
-    logger.info("RepoGPT MCP Server starting...")
-    response: dict[str, Any] | None
+    logging.getLogger("mcp").setLevel(logging.WARNING)
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(SDKDiagnosticFilter())
     try:
-        for line in sys.stdin:
-            if not line.strip():
-                continue
-            try:
-                request = json.loads(line)
-            except ValueError as exc:
-                response = _error(None, -32700, f"Parse error: {exc}")
+        anyio.run(serve)
+    except BaseException as exc:
+        # AnyIO task groups aggregate transport failures. Inspect leaves without
+        # exposing exception text or tracebacks containing request contents.
+        pending = [exc]
+        leaves: list[BaseException] = []
+        while pending:
+            item = pending.pop()
+            children = getattr(item, "exceptions", None)
+            if children is not None:
+                pending.extend(children)
             else:
-                response = handle_request(request)
-            if response is not None:
-                print(json.dumps(response, ensure_ascii=False, separators=(",", ":")), flush=True)
-    except BrokenPipeError:
-        silence_failed_stdout()
-        return 0
-    except OSError as exc:
-        silence_failed_stdout()
-        logger.error("stdio I/O error", error=str(exc))
+                leaves.append(item)
+        if leaves and all(isinstance(item, BrokenPipeError) for item in leaves):
+            silence_failed_stdout()
+            return 0
+        if leaves and all(isinstance(item, OSError) for item in leaves):
+            silence_failed_stdout()
+            logger.error("stdio I/O error")
+            return 3
+        if isinstance(exc, KeyboardInterrupt):
+            return 0
+        logger.error("server_internal_error exception_type=%s", type(exc).__name__)
         return 3
     return 0
 

@@ -11,7 +11,7 @@ from typing import Any, Literal
 
 import pytest
 
-from repogpt.adapters.writers.artifact_writer import ArtifactWriter
+from repogpt.adapters.writers.artifact_writer import ArtifactWriter, ArtifactWriteReceipt
 from repogpt.domain.analysis import (
     AstProjection,
     CodeUnitsProjection,
@@ -28,6 +28,27 @@ def test_writer_writes_ast_json_to_file(tmp_path: Path) -> None:
 
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["schema_version"] == "3"
+
+
+def test_receipt_check_sees_exact_bytes_before_publication_and_can_refuse(tmp_path: Path) -> None:
+    output = tmp_path / "out.json"
+    output.write_bytes(b"previous artifact")
+    seen: list[ArtifactWriteReceipt] = []
+
+    def check(receipt: ArtifactWriteReceipt) -> None:
+        assert output.read_bytes() == b"previous artifact"
+        prepared = next(tmp_path.glob(".out.json.*.tmp")).read_bytes()
+        assert receipt.sha256 == hashlib.sha256(prepared).hexdigest()
+        assert receipt.size_bytes == len(prepared)
+        seen.append(receipt)
+        raise ValueError("receipt refused")
+
+    with pytest.raises(ValueError, match="receipt refused"):
+        ArtifactWriter().write(AstProjection(json_payload={}), output, receipt_check=check)
+
+    assert len(seen) == 1
+    assert output.read_bytes() == b"previous artifact"
+    assert list(tmp_path.iterdir()) == [output]
 
 
 def test_writer_writes_ndjson_to_stdout(capsys: Any) -> None:

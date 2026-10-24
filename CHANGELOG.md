@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.0 (2026-10-23)
+
+- **Breaking CLI and MCP surface:** `--extensions` replaces `--languages`; native MCP tools are `repogpt_analyze`, `repogpt_compare_profiles`, and `repogpt_export`. Update callers directly. The optional official SDK handles framing, lifecycle, version negotiation, schemas, and notifications; the internal runtime initializes with `2025-11-25`.
+- Analysis and comparison are read-only. Export requires an explicit destination and returns a publication receipt with path, byte size, format, and SHA-256. Scope replacement remains opt-in and requires a complete analysis.
+- Oversized export responses retain a compact receipt with `details_truncated: true` and the actual completeness/error state. If even that receipt cannot fit, the prepared file is discarded before publication and any existing destination is preserved.
+- CLI destination checks run before analysis. The base-install `repogpt-mcp` entry point explains how to install the optional `[mcp]` extra. SDK logs start at WARNING and retain sanitized diagnostics.
+
 ## 0.11.0 (2026-10-21)
 
 - Atomic artifact writes synchronize temporary-file bytes with `fsync` before replacement. Synchronization failures preserve the prior artifact and remove temporary files.

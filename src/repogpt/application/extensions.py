@@ -12,7 +12,7 @@ class UnsupportedExtensionsError(ValueError):
     @property
     def message(self) -> str:
         return (
-            "unsupported languages: "
+            "unsupported extensions: "
             + ", ".join(self.unsupported)
             + "; supported: "
             + ", ".join(sorted(self.supported))

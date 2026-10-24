@@ -2,685 +2,474 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import subprocess
 import sys
+import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 from unittest.mock import patch
 
+import anyio
 import pytest
 from jsonschema import Draft202012Validator
+from mcp import ClientSession, StdioServerParameters, types
+from mcp.client.stdio import stdio_client
+from mcp.shared.exceptions import McpError
 
-import repogpt
-from repogpt.mcp_server import handle_request as dispatch_request
+from repogpt.mcp_server import (
+    MAX_RESPONSE_BYTES,
+    TOOLS,
+    SDKDiagnosticFilter,
+    ToolOutcome,
+    create_server,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SRC_ROOT = REPO_ROOT / "src"
-CLI_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "cli_repo"
-JsonDict = dict[str, Any]
+FIXTURE = REPO_ROOT / "tests" / "fixtures" / "cli_repo"
 
 
-def handle_request(request: JsonDict) -> JsonDict:
-    response = dispatch_request(request)
-    assert response is not None
-    return response
+def _call(name: str, arguments: dict[str, Any]) -> types.CallToolResult:
+    async def execute() -> types.CallToolResult:
+        server = create_server()
+        result = await server.request_handlers[types.CallToolRequest](
+            types.CallToolRequest(
+                method="tools/call",
+                params=types.CallToolRequestParams(name=name, arguments=arguments),
+            )
+        )
+        assert isinstance(result.root, types.CallToolResult)
+        return result.root
+
+    return anyio.run(execute)
 
 
-def _run(
-    args: list[str], repo_path: Path = CLI_FIXTURE, *, cwd: Path | None = None
-) -> subprocess.CompletedProcess[str]:
-    env = dict(os.environ)
-    existing_pythonpath = env.get("PYTHONPATH")
-    env["PYTHONPATH"] = (
-        f"{SRC_ROOT}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(SRC_ROOT)
+def _payload(result: types.CallToolResult) -> dict[str, Any]:
+    assert len(result.content) == 1 and isinstance(result.content[0], types.TextContent)
+    payload = json.loads(result.content[0].text)
+    assert payload == result.structuredContent
+    assert result.content[0].text == json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False
     )
-    return subprocess.run(
-        [sys.executable, "-m", "repogpt.app.cli", *args, str(repo_path)],
+    return cast(dict[str, Any], payload)
+
+
+@pytest.mark.parametrize(
+    "projection,format", [("ast", "json"), ("ast", "ndjson"), ("code-units", "json")]
+)
+def test_native_export_matches_cli_bytes_and_verified_receipt(
+    tmp_path: Path, projection: str, format: str
+) -> None:
+    destination = tmp_path / "artifact.json"
+    result = _call(
+        "repogpt_export",
+        {
+            "repo_path": str(FIXTURE),
+            "projection": projection,
+            "format": format,
+            "output_path": str(destination),
+            "include_tests": True,
+        },
+    )
+    receipt = _payload(result)
+    assert result.isError and receipt["complete"] is False
+    assert receipt["stats"]["failed_files"] == 1
+    cli = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "repogpt.app.cli",
+            str(FIXTURE),
+            "--stdout",
+            "--emit",
+            projection,
+            "--format",
+            format,
+            "--include-tests",
+        ],
         capture_output=True,
-        text=True,
-        cwd=str(cwd or REPO_ROOT),
-        env=env,
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")},
+        timeout=15,
     )
+    assert cli.returncode == 2
+    raw = destination.read_bytes()
+    assert raw == cli.stdout
+    assert receipt["sha256"] == hashlib.sha256(raw).hexdigest()
+    assert receipt["size_bytes"] == len(raw)
+    TOOLS["repogpt_export"].output_validator.validate(receipt)
 
 
-def _write_mcp_mixed_fixture(root: Path) -> None:
-    (root / "src").mkdir()
-    (root / "tests").mkdir()
-    (root / "docs").mkdir()
-    (root / "ignored").mkdir()
-
-    (root / "src" / "service.py").write_text(
-        "def helper() -> str:\n    return 'service'\n\n"
-        "class Demo:\n    def helper(self) -> str:\n        return 'method'\n",
-        encoding="utf-8",
-    )
-    (root / "tests" / "test_service.py").write_text(
-        "def test_helper() -> None:\n    assert helper() == 'service'\n",
-        encoding="utf-8",
-    )
-    (root / "docs" / "guide.md").write_text(
-        "# Title\n"
-        "## Details\n"
-        "Intro\n"
-        "## Details\n"
-        "More\n"
-        "### Subheading\n"
-        "### Subheading\n"
-        "### Details\n"
-        "# Footer\n",
-        encoding="utf-8",
-    )
-    (root / "ignored" / "skip.py").write_text(
-        "def ignored() -> None:\n    return None\n",
-        encoding="utf-8",
-    )
-    (root / ".repogptignore").write_text("ignored/\n", encoding="utf-8")
-
-
-def _json_lines(stdout: str) -> list[JsonDict]:
-    return [json.loads(line) for line in stdout.splitlines() if line.strip()]
-
-
-def _read_json(path: Path) -> JsonDict:
-    return cast(JsonDict, json.loads(path.read_text(encoding="utf-8")))
-
-
-def _extract_content_text(response: JsonDict) -> Any:
-    result = response["result"]
-    assert set(result) == {"content", "structuredContent", "isError"}
-    payload = json.loads(result["content"][0]["text"])
-    assert result["structuredContent"] == payload
-    assert isinstance(payload, dict)
-    return payload
-
-
-def _call_tool(name: str, arguments: JsonDict) -> JsonDict:
-    return handle_request(
-        {
-            "jsonrpc": "2.0",
-            "id": 42,
-            "method": "tools/call",
-            "params": {"name": name, "arguments": arguments},
-        }
-    )
-
-
-def _assert_payloads_equivalent(
-    cli_payload: JsonDict,
-    mcp_payload: JsonDict,
-) -> None:
-    assert cli_payload["schema_version"] == mcp_payload["schema_version"]
-    assert cli_payload["kind"] == mcp_payload["kind"]
-    assert cli_payload["stats"] == mcp_payload["stats"]
-    assert cli_payload["documents"] == mcp_payload["documents"]
-
-
-def test_mcp_initialize_and_list_tools() -> None:
-    initialize = handle_request({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
-    assert initialize["result"]["serverInfo"]["name"] == "repogpt"
-    assert initialize["result"]["serverInfo"]["version"] == repogpt.__version__
-    assert repogpt.__version__
-
-    listed = handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
-    names = {tool["name"] for tool in listed["result"]["tools"]}
-    assert {
-        "repogpt_emit_code_units",
-        "repogpt_emit_ast",
-        "repogpt_compare_profiles",
-    } <= names
-
-
-@pytest.mark.parametrize("requested", ["2025-06-18", "2024-11-05", "2099-01-01"])
-def test_mcp_negotiates_only_supported_protocol_version(requested: str) -> None:
-    response = handle_request(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {"protocolVersion": requested},
-        }
-    )
-    assert response["result"]["protocolVersion"] == "2025-06-18"
-
-
-def test_mcp_ping_returns_empty_result() -> None:
-    response = handle_request({"jsonrpc": "2.0", "id": "health", "method": "ping"})
-    assert response == {"jsonrpc": "2.0", "id": "health", "result": {}}
-
-
-def test_mcp_text_artifact_is_compact_utf8_json(tmp_path: Path) -> None:
-    (tmp_path / "café.py").write_text("def café():\n    return 1\n", encoding="utf-8")
-    response = handle_request(
-        {
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "tools/call",
-            "params": {
-                "name": "repogpt_emit_ast",
-                "arguments": {"repo_path": str(tmp_path)},
-            },
-        }
-    )
-    text = response["result"]["content"][0]["text"]
-    assert "café" in text
-    assert text == json.dumps(json.loads(text), ensure_ascii=False, separators=(",", ":"))
-
-
-def test_mcp_emit_code_units_matches_cli_output() -> None:
-    cli_run = _run(
-        ["--stdout", "--format", "json", "--emit", "code-units", "--include-tests"], CLI_FIXTURE
-    )
-    assert cli_run.returncode == 2
-    cli_payload = json.loads(cli_run.stdout)
-
-    response = handle_request(
-        {
-            "jsonrpc": "2.0",
-            "id": 3,
-            "method": "tools/call",
-            "params": {
-                "name": "repogpt_emit_code_units",
-                "arguments": {
-                    "repo_path": str(CLI_FIXTURE),
-                    "include_tests": True,
-                },
-            },
-        }
-    )
-
-    payload = _extract_content_text(response)
-    assert response["result"]["isError"] is True
-    assert payload == cli_payload
-
-
-@pytest.mark.parametrize("tool_name", ["repogpt_emit_ast", "repogpt_emit_code_units"])
+@pytest.mark.parametrize("projection", ["ast", "code-units"])
 @pytest.mark.parametrize("fail_fast", [False, True])
-def test_mcp_parse_failures_mark_retained_artifact_as_error(
-    tmp_path: Path, tool_name: str, fail_fast: bool
+def test_partial_analysis_preserves_native_artifact(
+    tmp_path: Path, projection: str, fail_fast: bool
 ) -> None:
-    (tmp_path / "a_broken.py").write_text("def broken(:\n", encoding="utf-8")
-    (tmp_path / "b_good.py").write_text("x = 1\n", encoding="utf-8")
-    response = handle_request(
+    (tmp_path / "a.py").write_text("def broken(:\n")
+    (tmp_path / "b.py").write_text("x = 1\n")
+    result = _call(
+        "repogpt_analyze",
         {
-            "jsonrpc": "2.0",
-            "id": 30,
-            "method": "tools/call",
-            "params": {
-                "name": tool_name,
-                "arguments": {"repo_path": str(tmp_path), "fail_fast": fail_fast},
-            },
-        }
+            "repo_path": str(tmp_path),
+            "projection": projection,
+            "response_mode": "inline",
+            "fail_fast": fail_fast,
+        },
     )
-
-    assert "error" not in response
-    assert response["result"]["isError"] is True
-    payload = _extract_content_text(response)
+    payload = _payload(result)
+    assert result.isError and not payload["complete"]
     assert payload["stats"]["failed_files"] == 1
     assert payload["stats"]["ok_files"] == (0 if fail_fast else 1)
+    assert payload["artifact"]["failures"] == payload["failures"]
+    TOOLS["repogpt_analyze"].output_validator.validate(payload)
 
 
-def test_mcp_language_filter_matches_cli_normalization() -> None:
-    cli_run = _run(["--stdout", "--format", "json", "--languages", "py"], CLI_FIXTURE)
-    assert cli_run.returncode == 2
-    cli_payload = json.loads(cli_run.stdout)
-
-    response = handle_request(
-        {
-            "jsonrpc": "2.0",
-            "id": 31,
-            "method": "tools/call",
-            "params": {
-                "name": "repogpt_emit_ast",
-                "arguments": {
-                    "repo_path": str(CLI_FIXTURE),
-                    "languages": [" PY "],
-                },
-            },
-        }
+def test_analysis_defaults_to_read_only_summary_and_normalizes_extensions(tmp_path: Path) -> None:
+    (tmp_path / "café.py").write_text("x = 1\n")
+    (tmp_path / "a.md").write_text("# Heading\n")
+    before = sorted(tmp_path.iterdir())
+    payload = _payload(
+        _call("repogpt_analyze", {"repo_path": str(tmp_path), "extensions": [" PY "]})
     )
-
-    payload = _extract_content_text(response)
-    assert response["result"]["isError"] is True
-    assert payload == cli_payload
-
-
-def test_mcp_rejects_unsupported_language_like_cli() -> None:
-    response = handle_request(
-        {
-            "jsonrpc": "2.0",
-            "id": 32,
-            "method": "tools/call",
-            "params": {
-                "name": "repogpt_emit_ast",
-                "arguments": {
-                    "repo_path": str(CLI_FIXTURE),
-                    "languages": ["ts"],
-                },
-            },
-        }
-    )
-
-    assert response["error"]["code"] == -32602
-    assert "unsupported languages: ts; supported: md, py" == response["error"]["message"]
+    assert payload["stats"]["total_files"] == 1 and "artifact" not in payload
+    assert payload["complete"]
+    assert sorted(tmp_path.iterdir()) == before
+    empty = _payload(_call("repogpt_analyze", {"repo_path": str(tmp_path), "extensions": []}))
+    assert empty["stats"]["total_files"] == 0
 
 
-def test_mcp_empty_language_filter_collects_nothing() -> None:
-    response = handle_request(
-        {
-            "jsonrpc": "2.0",
-            "id": 33,
-            "method": "tools/call",
-            "params": {
-                "name": "repogpt_emit_ast",
-                "arguments": {
-                    "repo_path": str(CLI_FIXTURE),
-                    "languages": [],
-                },
-            },
-        }
-    )
-
-    payload = _extract_content_text(response)
-    assert response["result"]["isError"] is False
-    assert payload["stats"]["total_files"] == 0
-    assert payload["records"] == []
-
-
-def test_mcp_emit_ast_supports_ndjson() -> None:
-    response = handle_request(
-        {
-            "jsonrpc": "2.0",
-            "id": 4,
-            "method": "tools/call",
-            "params": {
-                "name": "repogpt_emit_ast",
-                "arguments": {
-                    "repo_path": str(CLI_FIXTURE),
-                    "format": "ndjson",
-                    "flatten": "file",
-                    "include_tests": True,
-                },
-            },
-        }
-    )
-
-    payload = _extract_content_text(response)
-    assert set(payload) == {"schema_version", "format", "records"}
-    assert payload["schema_version"] == "3"
-    assert payload["format"] == "ndjson"
-    records = payload["records"]
-    assert response["result"]["isError"] is True
-    assert isinstance(records, list)
-    assert records[-1]["record_type"] == "summary"
-
-
-def test_mcp_compare_profiles_uses_code_units_artifact(tmp_path: Path) -> None:
-    artifact_path = tmp_path / "code_units.json"
-    artifact = _run(
-        ["--format", "json", "--emit", "code-units", "-o", str(artifact_path)], CLI_FIXTURE
-    )
-    assert artifact.returncode == 2
-
-    response = handle_request(
-        {
-            "jsonrpc": "2.0",
-            "id": 5,
-            "method": "tools/call",
-            "params": {
-                "name": "repogpt_compare_profiles",
-                "arguments": {
-                    "artifact_path": str(artifact_path),
-                    "query": "helper",
-                },
-            },
-        }
-    )
-
-    comparison = _extract_content_text(response)
-    assert response["result"]["isError"] is False
-    assert comparison["query_text"] == "helper"
-    assert "flat_rag_v3" in comparison
-    assert "structured_rag_v3" in comparison
-    assert _read_json(artifact_path)["kind"] == "code-units"
-
-
-def test_mcp_end_to_end_mixed_repo_matches_cli_across_flags(tmp_path: Path) -> None:
-    repo_root = tmp_path / "repo"
-    repo_root.mkdir()
-    _write_mcp_mixed_fixture(repo_root)
-    resolved_repo_root = repo_root.resolve()
-
-    for include_tests in (False, True):
-        include_tests_arg = ["--include-tests"] if include_tests else []
-        cli_run = _run(
-            ["--stdout", "--format", "json", "--emit", "code-units", *include_tests_arg],
-            resolved_repo_root,
-            cwd=tmp_path,
-        )
-        assert cli_run.returncode == 0
-        cli_payload = json.loads(cli_run.stdout)
-
-        response = handle_request(
+def test_inline_analysis_matches_cli(tmp_path: Path) -> None:
+    (tmp_path / "café.py").write_text("def café():\n    return 1\n", encoding="utf-8")
+    payload = _payload(
+        _call(
+            "repogpt_analyze",
             {
-                "jsonrpc": "2.0",
-                "id": 6,
-                "method": "tools/call",
-                "params": {
-                    "name": "repogpt_emit_code_units",
-                    "arguments": {
-                        "repo_path": str(resolved_repo_root),
-                        "include_tests": include_tests,
-                    },
-                },
-            }
-        )
-
-        mcp_payload = _extract_content_text(response)
-        assert response["result"]["isError"] is False
-        _assert_payloads_equivalent(cli_payload, mcp_payload)
-
-        cli_ast = _run(
-            ["--stdout", "--format", "ndjson", "--flatten", "file", *include_tests_arg],
-            resolved_repo_root,
-            cwd=tmp_path,
-        )
-        assert cli_ast.returncode == 0
-        cli_records = _json_lines(cli_ast.stdout)
-        assert cli_records[-1]["record_type"] == "summary"
-        assert cli_records[-1]["schema_version"] == "3"
-
-        response_ast = handle_request(
-            {
-                "jsonrpc": "2.0",
-                "id": 7,
-                "method": "tools/call",
-                "params": {
-                    "name": "repogpt_emit_ast",
-                    "arguments": {
-                        "repo_path": str(resolved_repo_root),
-                        "format": "ndjson",
-                        "flatten": "file",
-                        "include_tests": include_tests,
-                    },
-                },
-            }
-        )
-        mcp_ast = _extract_content_text(response_ast)["records"]
-        assert response_ast["result"]["isError"] is False
-        assert mcp_ast == cli_records
-        assert mcp_ast[-1]["record_type"] == "summary"
-        assert mcp_ast[-1]["schema_version"] == "3"
-
-    artifact = _run(
-        ["--stdout", "--format", "json", "--emit", "code-units", "--include-tests"],
-        resolved_repo_root,
-        cwd=tmp_path,
-    )
-    artifact_json = json.loads(artifact.stdout)
-    comparison_input = tmp_path / "code_units.json"
-    comparison_input.write_text(
-        json.dumps(artifact_json, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
-    compare = handle_request(
-        {
-            "jsonrpc": "2.0",
-            "id": 8,
-            "method": "tools/call",
-            "params": {
-                "name": "repogpt_compare_profiles",
-                "arguments": {
-                    "artifact_path": str(comparison_input),
-                    "query": "helper",
-                },
+                "repo_path": str(tmp_path),
+                "response_mode": "inline",
+                "projection": "code-units",
+                "repo_key": "sample",
             },
-        }
-    )
-
-    comparison = _extract_content_text(compare)
-    assert compare["result"]["isError"] is False
-    assert comparison["query_text"] == "helper"
-    assert "flat_rag_v3" in comparison
-    assert "structured_rag_v3" in comparison
-
-
-@pytest.mark.parametrize("top_k", [0, 1, 7])
-def test_mcp_compare_profiles_exposes_top_k(tmp_path: Path, top_k: int) -> None:
-    artifact = tmp_path / "units.json"
-    generated = _run(["--emit", "code-units", "-o", str(artifact)])
-    assert generated.returncode == 2
-
-    response = _call_tool(
-        "repogpt_compare_profiles",
-        {"artifact_path": str(artifact), "query": "helper", "top_k": top_k},
-    )
-    payload = _extract_content_text(response)
-    assert response["result"]["isError"] is False
-    assert payload["top_k"] == top_k
-    assert payload["flat_rag_v3"]["seed_count"] <= top_k
-    if top_k == 0:
-        assert payload["flat_rag_v3"]["external_ids"] == []
-        assert payload["structured_rag_v3"]["external_ids"] == []
-
-
-@pytest.mark.parametrize("invalid", [-1, True, False, 1.0, "1", None])
-def test_mcp_invalid_top_k_is_rejected_before_artifact_read(invalid: Any) -> None:
-    with patch("repogpt.mcp_server.load_documents") as load:
-        response = _call_tool(
-            "repogpt_compare_profiles",
-            {"artifact_path": "missing.json", "query": "helper", "top_k": invalid},
         )
-        load.assert_not_called()
-    assert response["error"]["code"] == -32602
+    )
+    cli = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "repogpt.app.cli",
+            str(tmp_path),
+            "--stdout",
+            "--emit",
+            "code-units",
+            "--repo-key",
+            "sample",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert cli.returncode == 0
+    assert payload["artifact"] == json.loads(cli.stdout)
 
 
 @pytest.mark.parametrize(
-    "tool_name,format,schema_version",
+    "arguments",
     [
-        ("repogpt_emit_ast", "json", "3"),
-        ("repogpt_emit_ast", "ndjson", "3"),
-        ("repogpt_emit_code_units", "json", "6"),
+        {},
+        {"repo_path": " "},
+        {"repo_path": "x", "extensions": "py"},
+        {"repo_path": "x", "extensions": [1]},
+        {"repo_path": "x", "extensions": ["ts"]},
+        {"repo_path": "x", "languages": ["py"]},
+        {"repo_path": "x", "output_path": "x"},
+        {"repo_path": "x", "include_tests": 1},
+        {"repo_path": "x", "projection": "other"},
+        {"repo_path": "x", "repo_key": "invalid key"},
     ],
 )
-@pytest.mark.parametrize("failure_mode", ["none", "partial", "fail-fast"])
-def test_mcp_file_output_returns_only_verified_receipt(
-    tmp_path: Path, tool_name: str, format: str, schema_version: str, failure_mode: str
-) -> None:
+def test_invalid_analysis_arguments_are_protocol_errors(arguments: dict[str, Any]) -> None:
+    with pytest.raises(McpError) as error:
+        _call("repogpt_analyze", arguments)
+    assert error.value.error.code == -32602
+
+
+@pytest.mark.parametrize("name", ["repogpt_emit_ast", "repogpt_emit_code_units", "missing"])
+def test_removed_and_unknown_tools_have_no_alias(name: str) -> None:
+    with pytest.raises(McpError) as error:
+        _call(name, {})
+    assert error.value.error.code == -32602
+
+
+@pytest.mark.parametrize("kind", ["missing", "directory", "invalid"])
+def test_expected_failure_is_structured(kind: str, tmp_path: Path) -> None:
+    target = tmp_path / "input.json"
+    if kind == "directory":
+        target.mkdir()
+    elif kind == "invalid":
+        target.write_text("{broken")
+    result = _call("repogpt_compare_profiles", {"artifact_path": str(target), "query": "x"})
+    assert result.isError
+    assert _payload(result)["error"]["code"] == "operation_failed"
+
+
+def test_comparison_native_parity(tmp_path: Path) -> None:
+    from repogpt.utils.retrieval_artifact import load_documents
+    from repogpt.utils.retrieval_profiles import compare_profiles
+
+    output = tmp_path / "units.json"
+    _call(
+        "repogpt_export",
+        {"repo_path": str(FIXTURE), "output_path": str(output), "projection": "code-units"},
+    )
+    result = _call(
+        "repogpt_compare_profiles", {"artifact_path": str(output), "query": "sample", "top_k": 2}
+    )
+    assert not result.isError
+    assert _payload(result) == compare_profiles(
+        load_documents(output), query_text="sample", top_k=2
+    )
+
+
+@pytest.mark.parametrize("destination", ["-", "/dev/stdout", "/dev/stdin", "/dev/stderr"])
+def test_export_requires_regular_destination(destination: str) -> None:
+    with pytest.raises(McpError) as error:
+        _call("repogpt_export", {"repo_path": str(FIXTURE), "output_path": destination})
+    assert error.value.error.code == -32602
+
+
+@pytest.mark.parametrize("kind", ["source", "symlink", "dangling", "directory", "fifo"])
+def test_export_refuses_unsafe_leaf_without_modification(tmp_path: Path, kind: str) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
-    (repo / "z_café.py").write_text("def café():\n    return '🙂'\n", encoding="utf-8")
-    if failure_mode != "none":
-        (repo / "a_broken.py").write_text("def broken(:\n", encoding="utf-8")
-    output = tmp_path / "artifact.json"
-    output.write_bytes(b"previous artifact")
-    output.chmod(0o640)
-    arguments: JsonDict = {
-        "repo_path": str(repo),
-        "output_path": str(output),
-        "fail_fast": failure_mode == "fail-fast",
-    }
-    if tool_name == "repogpt_emit_ast":
-        arguments["format"] = format
-
-    response = _call_tool(tool_name, arguments)
-    receipt = _extract_content_text(response)
-    raw = output.read_bytes()
-    assert set(receipt) == {
-        "output_path",
-        "format",
-        "schema_version",
-        "size_bytes",
-        "sha256",
-        "stats",
-    }
-    assert receipt["output_path"] == str(output)
-    assert receipt["format"] == format
-    assert receipt["schema_version"] == schema_version
-    assert receipt["size_bytes"] == len(raw)
-    assert receipt["sha256"] == hashlib.sha256(raw).hexdigest()
-    assert output.stat().st_mode & 0o777 == 0o640
-    assert response["result"]["isError"] is (failure_mode != "none")
-    if format == "ndjson":
-        stats = json.loads(raw.splitlines()[-1])["stats"]
+    source = repo / "source.py"
+    source.write_text("x = 1\n")
+    destination = repo / "artifact.json"
+    if kind == "source":
+        destination = source
+    elif kind == "symlink":
+        destination.symlink_to(source)
+    elif kind == "dangling":
+        destination.symlink_to(tmp_path / "missing")
+    elif kind == "directory":
+        destination.mkdir()
     else:
-        stats = json.loads(raw)["stats"]
-    assert receipt["stats"] == stats
-    assert stats["failed_files"] == (failure_mode != "none")
-    assert stats["ok_files"] == (0 if failure_mode == "fail-fast" else 1)
+        os.mkfifo(destination)
+    with pytest.raises(McpError) as error:
+        _call(
+            "repogpt_export",
+            {"repo_path": str(repo), "output_path": str(destination), "extensions": []},
+        )
+    assert error.value.error.code == -32602
+    assert source.read_text() == "x = 1\n"
+
+
+def test_export_failure_keeps_previous_file_and_cleans_temporary(tmp_path: Path) -> None:
+    output = tmp_path / "artifact.json"
+    output.write_bytes(b"previous")
+    with patch(
+        "repogpt.adapters.writers.artifact_writer.os.replace", side_effect=OSError("injected")
+    ):
+        result = _call("repogpt_export", {"repo_path": str(FIXTURE), "output_path": str(output)})
+    assert result.isError
+    assert output.read_bytes() == b"previous"
     assert list(tmp_path.glob(".*.tmp")) == []
 
 
-def test_mcp_file_receipt_resolves_parent_and_retains_leaf(tmp_path: Path) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    destination = tmp_path / "actual"
-    destination.mkdir()
-    alias = tmp_path / "alias"
-    alias.symlink_to(destination, target_is_directory=True)
-    response = _call_tool(
-        "repogpt_emit_ast",
-        {"repo_path": str(repo), "output_path": str(alias / "artifact.json")},
-    )
-
-    receipt = _extract_content_text(response)
-    assert receipt["output_path"] == str(destination / "artifact.json")
-    assert (destination / "artifact.json").is_file()
-
-
-@pytest.mark.parametrize("destination", ["", " \t ", "-", "/dev/stdout", "/dev/fd/1", "/dev/null"])
-def test_mcp_rejects_blank_and_stdio_output_paths_before_analysis(destination: str) -> None:
-    with patch("repogpt.mcp_server.build_analyze_repo") as build:
-        response = _call_tool(
-            "repogpt_emit_ast", {"repo_path": "unused", "output_path": destination}
-        )
-        build.assert_not_called()
-    assert response["error"]["code"] == -32602
-
-
-@pytest.mark.parametrize("kind", ["symlink", "dangling-symlink", "directory", "fifo", "source"])
-def test_mcp_file_output_refuses_unsafe_leaf_without_modification(
-    tmp_path: Path, kind: str
-) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    source = repo / "sample.py"
-    original = b"x = 1\n"
-    source.write_bytes(original)
+def test_replacement_requires_complete_full_selection(tmp_path: Path) -> None:
     output = tmp_path / "out.json"
-    if kind == "symlink":
-        output.symlink_to(source)
-    elif kind == "dangling-symlink":
-        output.symlink_to(tmp_path / "missing")
-    elif kind == "directory":
-        output.mkdir()
-    elif kind == "fifo":
-        os.mkfifo(output)
-    else:
-        output = source
-
-    response = _call_tool("repogpt_emit_ast", {"repo_path": str(repo), "output_path": str(output)})
-    assert response["error"]["code"] == -32602
-    assert source.read_bytes() == original
-    if "symlink" in kind:
-        assert output.is_symlink()
-
-
-def test_mcp_file_output_does_not_create_missing_parent(tmp_path: Path) -> None:
-    output = tmp_path / "missing" / "out.json"
-    response = _call_tool(
-        "repogpt_emit_ast", {"repo_path": str(tmp_path), "output_path": str(output)}
-    )
-    assert response["result"]["isError"] is True
-    assert set(_extract_content_text(response)) == {"error"}
-    assert not output.parent.exists()
+    arguments = {
+        "repo_path": str(tmp_path),
+        "output_path": str(output),
+        "projection": "code-units",
+        "replace_scope": True,
+    }
+    with pytest.raises(McpError) as error:
+        _call("repogpt_export", arguments)
+    assert error.value.error.code == -32602
+    failed = _call("repogpt_export", {**arguments, "include_tests": True})
+    assert failed.isError and not output.exists()
+    (tmp_path / "source.py").write_text("x = 1\n")
+    success = _call("repogpt_export", {**arguments, "include_tests": True})
+    assert not success.isError
+    assert json.loads(output.read_text())["replace_scope"] is True
 
 
-def test_mcp_file_output_refuses_source_after_fail_fast_stop(tmp_path: Path) -> None:
-    (tmp_path / "a_broken.py").write_text("def broken(:\n", encoding="utf-8")
-    source = tmp_path / "z_later.py"
-    source.write_bytes(b"x = 1\n")
-
-    response = _call_tool(
-        "repogpt_emit_ast",
-        {"repo_path": str(tmp_path), "output_path": str(source), "fail_fast": True},
-    )
-
-    assert response["error"]["code"] == -32602
-    assert source.read_bytes() == b"x = 1\n"
-
-
-def test_mcp_file_write_failure_preserves_previous_file_and_request_recovery(
+def test_inline_response_limit_returns_explicit_error_without_partial_artifact(
     tmp_path: Path,
 ) -> None:
-    output = tmp_path / "out.json"
-    output.write_bytes(b"previous artifact")
-    with patch("repogpt.adapters.writers.artifact_writer.os.replace", side_effect=OSError("disk")):
-        failed = _call_tool(
-            "repogpt_emit_ast", {"repo_path": str(tmp_path), "output_path": str(output)}
-        )
-
-    assert failed["result"]["isError"] is True
-    assert "failed to write artifact" in _extract_content_text(failed)["error"]
-    assert output.read_bytes() == b"previous artifact"
-    assert list(tmp_path.glob(".*.tmp")) == []
-    recovered = _call_tool("repogpt_emit_ast", {"repo_path": str(tmp_path)})
-    assert recovered["result"]["isError"] is False
+    (tmp_path / "big.py").write_text('"""' + "x" * 200_000 + '"""\n')
+    result = _call("repogpt_analyze", {"repo_path": str(tmp_path), "response_mode": "inline"})
+    assert result.isError
+    assert _payload(result)["error"]["code"] == "response_too_large"
+    assert len(result.model_dump_json().encode()) < MAX_RESPONSE_BYTES
+    assert _payload(_call("repogpt_analyze", {"repo_path": str(tmp_path)}))["complete"]
 
 
-@pytest.mark.parametrize(
-    "tool_name,format",
-    [
-        ("repogpt_emit_ast", "json"),
-        ("repogpt_emit_ast", "ndjson"),
-        ("repogpt_emit_code_units", "json"),
-    ],
-)
-@pytest.mark.parametrize("mode", ["inline", "file", "partial", "failure"])
-def test_mcp_declared_output_schema_validates_all_result_modes(
-    tmp_path: Path, tool_name: str, format: str, mode: str
+def test_large_failure_evidence_keeps_export_receipt_and_full_native_artifact(
+    tmp_path: Path,
 ) -> None:
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    (repo / "sample.py").write_text("x = 1\n", encoding="utf-8")
-    if mode == "partial":
-        (repo / "bad.py").write_text("def broken(:\n", encoding="utf-8")
-    arguments: JsonDict = {"repo_path": str(repo if mode != "failure" else repo / "missing")}
-    if tool_name == "repogpt_emit_ast":
-        arguments["format"] = format
-    if mode == "file":
-        arguments["output_path"] = str(tmp_path / "out.json")
-    listed = handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
-    tool = next(item for item in listed["result"]["tools"] if item["name"] == tool_name)
-    assert tool["annotations"]["readOnlyHint"] is False
-    assert tool["annotations"]["destructiveHint"] is True
-    schema = tool["outputSchema"]
-    Draft202012Validator.check_schema(schema)
-    response = _call_tool(tool_name, arguments)
-    payload = _extract_content_text(response)
-    validator = Draft202012Validator(schema)
-    validator.validate(payload)
-    assert not validator.is_valid({**payload, "unknown_result_field": True})
+    from repogpt.runtime import build_analyze_repo
+
+    analyzer = build_analyze_repo()
+    result, artifact = analyzer.run(analyzer.request(repo_path=str(FIXTURE)))
+    artifact.json_payload["failures"][0]["error"] = "failure evidence " * 20_000
+    destination = tmp_path / "partial.json"
+    with patch("repogpt.mcp_server.build_analyze_repo", return_value=analyzer):
+        with patch.object(analyzer, "run", return_value=(result, artifact)):
+            response = _call(
+                "repogpt_export", {"repo_path": str(FIXTURE), "output_path": str(destination)}
+            )
+    receipt = _payload(response)
+    assert response.isError and receipt["output_path"] == str(destination)
+    assert receipt["failure_count"] == 1 and receipt["failures_truncated"]
+    assert receipt["failures"] == []
+    assert json.loads(destination.read_text())["failures"] == artifact.json_payload["failures"]
+    assert len(response.model_dump_json().encode()) < MAX_RESPONSE_BYTES
 
 
-def test_mcp_compare_output_schema_covers_success_and_error(tmp_path: Path) -> None:
-    artifact = tmp_path / "units.json"
-    _run(["--emit", "code-units", "-o", str(artifact)])
-    listed = handle_request({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
-    tool = next(
-        item for item in listed["result"]["tools"] if item["name"] == "repogpt_compare_profiles"
+@pytest.mark.parametrize("failure", ["exception", "value_error", "invalid_output", "nonfinite"])
+def test_internal_and_output_failures_are_sanitized(
+    failure: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    def broken(**_: Any) -> ToolOutcome:
+        if failure == "exception":
+            raise RuntimeError("PRIVATE-CONTENT")
+        if failure == "value_error":
+            raise ValueError("PRIVATE-CONTENT")
+        if failure == "nonfinite":
+            return ToolOutcome({"error": {"code": "x", "message": float("nan")}})
+        return ToolOutcome({"PRIVATE-CONTENT": "x"})
+
+    with patch.dict(TOOLS, {"repogpt_analyze": replace(TOOLS["repogpt_analyze"], handler=broken)}):
+        with pytest.raises(McpError) as error:
+            _call("repogpt_analyze", {"repo_path": "unused"})
+    assert error.value.error.code == -32603
+    assert "PRIVATE-CONTENT" not in str(error.value)
+    assert "PRIVATE-CONTENT" not in caplog.text
+
+
+def test_sdk_log_filter_sanitizes_root_records_and_preserves_application_diagnostics() -> None:
+    record = logging.LogRecord(
+        "root",
+        logging.WARNING,
+        "/env/site-packages/mcp/shared/session.py",
+        1,
+        "PRIVATE %s",
+        ("DATA",),
+        None,
     )
-    assert tool["annotations"]["readOnlyHint"] is True
-    assert tool["inputSchema"]["properties"]["top_k"] == {
-        "type": "integer",
-        "minimum": 0,
-        "default": 3,
-    }
-    validator = Draft202012Validator(tool["outputSchema"])
-    for path in (artifact, tmp_path / "missing.json"):
-        response = _call_tool(
-            "repogpt_compare_profiles", {"artifact_path": str(path), "query": "helper"}
+    record.exc_text = "PRIVATE trace"
+    record.stack_info = "PRIVATE stack"
+    assert SDKDiagnosticFilter().filter(record)
+    assert "PRIVATE" not in logging.Formatter().format(record)
+    app = logging.LogRecord(
+        "repogpt", logging.INFO, __file__, 1, "safe event %s", ("complete",), None
+    )
+    SDKDiagnosticFilter().filter(app)
+    assert app.getMessage() == "safe event complete"
+
+
+def test_worker_keeps_slot_until_cancelled_work_finishes() -> None:
+    started = threading.Event()
+    release = threading.Event()
+    seen: list[int] = []
+
+    def blocking(**_: Any) -> ToolOutcome:
+        seen.append(1)
+        started.set()
+        release.wait(5)
+        return ToolOutcome({"error": {"code": "fixture", "message": "done"}})
+
+    async def execute() -> None:
+        server = create_server()
+
+        async def invoke(*, task_status: Any = anyio.TASK_STATUS_IGNORED) -> None:
+            with anyio.CancelScope() as scope:
+                task_status.started(scope)
+                await server.request_handlers[types.CallToolRequest](
+                    types.CallToolRequest(
+                        method="tools/call",
+                        params=types.CallToolRequestParams(
+                            name="repogpt_analyze", arguments={"repo_path": "unused"}
+                        ),
+                    )
+                )
+
+        async with anyio.create_task_group() as group:
+            scope = await group.start(invoke)
+            await anyio.to_thread.run_sync(started.wait)
+            scope.cancel()
+            group.start_soon(invoke)
+            await anyio.sleep(0.05)
+            assert len(seen) == 1
+            release.set()
+        assert len(seen) == 2
+
+    with patch.dict(
+        TOOLS, {"repogpt_analyze": replace(TOOLS["repogpt_analyze"], handler=blocking)}
+    ):
+        anyio.run(execute)
+
+
+def test_installed_style_stdio_session_and_notifications(tmp_path: Path) -> None:
+    (tmp_path / "sample.py").write_text("def sample():\n    return 1\n")
+    output = tmp_path / "must-not-exist.json"
+
+    async def execute() -> None:
+        params = StdioServerParameters(
+            command=sys.executable,
+            args=["-m", "repogpt.mcp_server"],
+            cwd=str(tmp_path),
+            env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")},
         )
-        payload = _extract_content_text(response)
-        validator.validate(payload)
-        assert not validator.is_valid({**payload, "unknown_result_field": True})
+        async with stdio_client(params) as (reader, writer):
+            async with ClientSession(reader, writer) as session:
+                initialized = await session.initialize()
+                assert initialized.protocolVersion == "2025-11-25"
+                assert initialized.serverInfo.name == "repogpt"
+                await session.send_ping()
+                listed = await session.list_tools()
+                assert {tool.name for tool in listed.tools} == set(TOOLS)
+                for tool in listed.tools:
+                    assert tool.outputSchema is not None
+                    Draft202012Validator.check_schema(tool.outputSchema)
+                    assert tool.annotations is not None
+                    assert tool.annotations.readOnlyHint == (tool.name != "repogpt_export")
+                # Invalid request-only notifications must never execute their tools.
+                from mcp.shared.message import SessionMessage
+
+                await writer.send(
+                    SessionMessage(
+                        types.JSONRPCMessage.model_validate(
+                            {
+                                "jsonrpc": "2.0",
+                                "method": "tools/call",
+                                "params": {
+                                    "name": "repogpt_export",
+                                    "arguments": {
+                                        "repo_path": str(tmp_path),
+                                        "output_path": str(output),
+                                    },
+                                },
+                            }
+                        )
+                    )
+                )
+                await session.send_ping()
+                assert not output.exists()
+                with pytest.raises(McpError) as error:
+                    await session.call_tool(
+                        "repogpt_analyze", {"repo_path": str(tmp_path), "languages": []}
+                    )
+                assert error.value.error.code == -32602
+                result = await session.call_tool(
+                    "repogpt_analyze", {"repo_path": str(tmp_path), "response_mode": "inline"}
+                )
+                assert not result.isError and _payload(result)["complete"]
+                missing = await session.call_tool(
+                    "repogpt_analyze", {"repo_path": str(tmp_path / "absent")}
+                )
+                assert missing.isError
+                await session.send_ping()
+
+    anyio.run(execute)

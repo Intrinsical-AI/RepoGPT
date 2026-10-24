@@ -28,7 +28,7 @@ Key properties:
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for contract and architecture details, and [ROADMAP.md](ROADMAP.md) for future work only.
 
-This source tree is **RepoGPT 0.11.0**. AST v3 and code-units v6 are breaking contracts: regenerate exports and update consumers together. The retrieval loader accepts code-units v6 only.
+This source tree is **RepoGPT 0.12.0**. AST v3 and code-units v6 are breaking contracts: regenerate exports and update consumers together. The retrieval loader accepts code-units v6 only.
 
 ## Installation
 
@@ -69,7 +69,7 @@ uv run python benchmark_retrieval_profiles.py code_units.json "helper"
 | `--format {json,ndjson}` | `json` | AST supports `json` and `ndjson`. `code-units` supports `json` only. |
 | `--stdout` | off | Write the artifact to STDOUT instead of a file. |
 | `-o, --output PATH` | depends on projection | Defaults to `analysis.json` for AST and `code_units.json` for `code-units`. |
-| `--languages "py,md"` | all supported parsers | Comma-separated, case-insensitive whitelist of enabled languages. |
+| `--extensions "py,md"` | all supported parsers | Comma-separated, case-insensitive whitelist of enabled languages. |
 | `--include-tests` | off | Include test paths and filenames described under collection rules. |
 | `--log-level {INFO,DEBUG}` | `INFO` | Structured log level for STDERR output. |
 | `--fail-fast` | off | Stop on the first parse error and return exit code `1`. |
@@ -83,9 +83,9 @@ Notes:
 - `--stdout` and `-o` are mutually exclusive, including `--stdout -o /dev/stdout`.
 - Passing `-o /dev/stdout` behaves like `--stdout`.
 - AST JSON uses `records`; `code-units` JSON uses `documents`.
-- `--languages` accepts parser extensions such as `py` and `md`; values are normalized case-insensitively.
+- `--extensions` accepts parser extensions such as `py` and `md`; values are normalized case-insensitively.
 - Unsupported language values and blank repository paths fail during argument validation.
-- Passing an empty language filter, such as `--languages ""`, collects no files.
+- Passing an empty language filter, such as `--extensions ""`, collects no files.
 
 ### Exit codes
 
@@ -119,7 +119,7 @@ Additional collection rules:
 - symlinks are skipped
 - non-regular files are skipped with the internal reason `non_regular_file`
 - likely binary files are skipped
-- unsupported extensions and supported languages excluded by `--languages` have distinct skip reasons
+- unsupported extensions and supported languages excluded by `--extensions` have distinct skip reasons
 
 The test-name rule is case-sensitive. `env/`, `build/`, and `dist/` are indexable unless excluded in `.repogptignore`; this repository explicitly excludes its own generated copies there. A directory containing a regular `pyvenv.cfg` is pruned as a virtual environment regardless of its name. RepoGPT does not read `.gitignore`.
 
@@ -235,61 +235,70 @@ Both schemas are included in the wheel and source distribution. Installed code c
 
 ## MCP interface
 
-RepoGPT ships a compact MCP server over stdio:
+Install the optional SDK dependencies before starting the native server:
 
 ```bash
-uv run repogpt-mcp
-# or
-uv run python -m repogpt.mcp_server
+uv sync --extra mcp
+uv run --extra mcp repogpt-mcp
+# or: uv run --extra mcp python -m repogpt.mcp_server
 ```
 
-Transport and envelope:
+The official MCP SDK owns stdio framing, initialization, standard negotiation,
+notifications and ping. The internal target is protocol `2025-11-25`. Initialize
+with that version, then send `notifications/initialized` before tool requests.
+Library and ordinary CLI imports do not load the SDK.
 
-- protocol: line-delimited JSON-RPC over stdio
-- initialization: `initialize`, returning the sole supported `protocolVersion: "2025-06-18"` and `serverInfo`; other requested versions receive this supported alternative
-- server version: `serverInfo.version`, derived from package metadata
-- tool discovery: `tools/list`
-- tool execution: `tools/call`
-- tool discovery publishes strict `inputSchema`, `outputSchema`, and behavior annotations
-- tool results contain a native JSON object in `structuredContent`, identical compact JSON in `content[0].text`, and `isError`
+| Tool | Required arguments | Optional arguments |
+| --- | --- | --- |
+| `repogpt_analyze` | `repo_path` | `projection` (`ast` default or `code-units`), `response_mode` (`summary` default or `inline`), `include_tests`, `extensions`, `fail_fast`, `repo_key`, `flatten` |
+| `repogpt_compare_profiles` | `artifact_path`, `query` | integer `top_k` (default `3`, minimum `0`) |
+| `repogpt_export` | `repo_path`, `output_path` | analysis options except `response_mode`; `format` (`json` default or AST-only `ndjson`), `replace_scope` (default `false`) |
 
-Built-in tools:
+`extensions` is an array such as `["py", "md"]`, normalized like CLI
+`--extensions`; an empty array collects no files. `repo_key` applies only to
+code-units. AST `flatten` defaults to `node` (or `file`). Analysis and comparison
+are read-only. Export is destructive because it can atomically replace an
+existing regular artifact file. Analysis never accepts a destination.
 
-- `repogpt_emit_code_units`
-- `repogpt_emit_ast`
-- `repogpt_compare_profiles`
+Analysis returns `projection`, `schema_version`, `complete`, native `stats`,
+`failures`, `failure_count`, and `failures_truncated`. Failure summaries are
+bounded to 64 KiB with explicit truncation metadata; native artifacts retain
+all failures. Inline mode adds the complete native `artifact`. Export returns the
+same summary plus `output_path`, `format`, `size_bytes`, and `sha256`; the exact
+artifact bytes match CLI output. Comparison retains the native profile result.
+All tools advertise strict input/output schemas and effect annotations. Every
+result includes structured content and identical compact JSON text.
 
-Tool behavior summary:
+Partial analysis retains its artifact or receipt with `complete: false` and
+`isError: true`. Expected operational failures return
+`{"error":{"code":"operation_failed","message":"..."}}` with `isError: true`.
+The complete tool result is bounded to 256 KiB. Oversized export summaries
+retain `projection`, `schema_version`, `complete`, all publication receipt
+fields, and `details_truncated: true`. If this minimum receipt cannot fit,
+export refuses before replacing the destination. Other oversized responses
+return `response_too_large`; canonical artifact files retain their full bytes.
 
-- `repogpt_emit_code_units` returns the code-units v6 artifact inline, or writes it to `output_path` and returns a file receipt.
-- `repogpt_emit_ast` returns the AST v3 envelope inline. Inline NDJSON uses the object `{"schema_version":"3","format":"ndjson","records":[...]}`. File mode writes JSON or actual newline-delimited records and returns a receipt.
-- `repogpt_compare_profiles` returns profile summaries with `top_k`, seed/expansion counts, deduplicated context sizes, token estimates, and selected external IDs.
+The writer hashes exact UTF-8 bytes and atomically replaces its destination,
+retaining existing permissions. Missing parents are not created. Blank paths,
+standard-I/O aliases, symlinks/non-regular leaves and existing repository source
+files are refused, including sources omitted by filters or fail-fast. Scope
+replacement retains the complete-selection guards described above.
 
-Tool arguments:
+Unknown tools and invalid arguments produce JSON-RPC `-32602`. Unexpected
+failures and invalid handler output produce sanitized `-32603`. Tool calls sent
+as notifications execute nothing. The SDK remains available after a failed
+request. Producer work runs off the event loop with one worker slot; cancellation
+does not release that slot until the worker finishes. A client timeout does not
+prove that file publication was rolled back.
 
-| Tool | Arguments |
-| --- | --- |
-| `repogpt_emit_code_units` | `repo_path` required; optional `include_tests`, `languages`, `fail_fast`, `repo_key`, `replace_scope`, `output_path` |
-| `repogpt_emit_ast` | `repo_path` required; optional `flatten`, `format`, `include_tests`, `languages`, `fail_fast`, `output_path` |
-| `repogpt_compare_profiles` | `artifact_path` and `query` required; optional integer `top_k` (default `3`, minimum `0`) |
+Logs remain on STDERR. SDK diagnostics are sanitized, including root-logger
+messages that could contain malformed request bodies. Application internal-error
+logs contain exception categories rather than request or exception contents.
 
-`languages` is an array of parser extensions such as `["py", "md"]`; values are normalized like the CLI. An empty array collects no files. Unsupported values return a JSON-RPC tool error.
-
-`repogpt_compare_profiles` reads an existing code-units v6 artifact. `top_k` rejects booleans, floats, and negative values before opening that file; zero returns empty bundles. Successful inline results directly contain the artifact or comparison. Execution failures contain `{"error":"message"}` in both result representations with `isError: true`. Partial and fail-fast runs retain their inline artifact or file receipt and also set `isError: true`; a refused scope replacement writes no artifact.
-
-`output_path` switches emit tools to file mode, keeping large artifacts off the response line. Its receipt has exactly `output_path`, `format`, `schema_version`, `size_bytes`, `sha256`, and `stats`. The writer hashes the exact UTF-8 bytes while writing, then atomically replaces the destination. Existing regular files are overwritten with their permissions retained. The receipt path is absolute, resolving the parent directory while preserving the filename. Missing parents are not created. Blank paths, standard-I/O aliases, symlink or non-regular leaves, and existing supported source files inside the analyzed repository are rejected; source protection also applies to files excluded by filters or left unvisited by fail-fast.
-
-Emit tools advertise `readOnlyHint: false` and `destructiveHint: true` because file mode can replace an existing artifact. Comparison advertises `readOnlyHint: true`. Each output schema covers successful results, partial artifacts, file receipts where supported, and execution-error objects.
-
-Required fields, unknown arguments, types, and enums are checked against the published tool schema; booleans are never coerced from strings or numbers. Invalid arguments use `-32602`, malformed JSON `-32700`, invalid envelopes `-32600`, and unknown methods `-32601`. Analysis failures and refused replacements use tool results with `isError: true`. Valid notifications receive no response and never dispatch tools. All entry-point logs go to STDERR; importing the MCP module does not configure logging. The session can handle subsequent requests after a failed request.
-
-The wire-argument helper checks fields/types/enums and numeric minima; handlers apply shared semantic policies, including the `repo_key` pattern and output-path protections, before collection. Invalid envelopes without an `id` still receive `-32600` with `id: null`. Closing the server's STDOUT pipe ends the process cleanly with `0`; other stdio I/O failures return `3`.
-
-Minimal request example:
-
-```json
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"example","version":"1"}}}
-```
+Breaking changes: the old `repogpt_emit_ast` and `repogpt_emit_code_units` tools
+are removed. Use `repogpt_analyze` for reads and `repogpt_export` for publication.
+CLI `--languages` and MCP `languages` are replaced by `--extensions` and
+`extensions`, without aliases.
 
 ## Retrieval profiles and model context
 
@@ -382,7 +391,7 @@ For example: `make repogpt ARGS='path/to/repo --stdout --include-tests'`.
 
 Cleanup never traverses directory symlinks. It prunes `.venv`, `.git`, `.agents`, `.codex`, `.aws`, and directories containing `pyvenv.cfg`, including custom environment names. Artifact symlinks are unlinked at the leaf. `distclean` additionally targets root `.mypy_cache`, `.ruff_cache`, `build`, and `dist`, plus `*.egg-info` directly under the root or `src`. Before deleting anything, the helper refuses any removal tree containing a protected path or virtual environment. `clean` retains build/distribution directories; `distclean` explicitly removes those outputs.
 
-Python integrations import concrete modules directly; package initializers no longer re-export classes or helpers. Internal file/request APIs use `extension` and `supported_extensions`; `extract_comments` accepts the `extension` values `py` and `md`. CLI `--languages` and MCP `languages` remain the public filter names. `CollectedFile.relative_path` must be non-empty.
+Python integrations import concrete modules directly; package initializers no longer re-export classes or helpers. Internal file/request APIs use `extension` and `supported_extensions`; `extract_comments` accepts the `extension` values `py` and `md`. CLI `--extensions` and MCP `extensions` use the same normalized filter. `CollectedFile.relative_path` must be non-empty.
 
 ## Project layout
 
@@ -412,7 +421,7 @@ High-level responsibilities:
 
 - `runtime.py` wires the shared analysis runtime; `AnalyzeRepo.run(request)` returns `(result, projection)` after validation and does not write output
 - `app/cli.py` exposes the CLI entry point and sends the returned projection to the file/stdout writer
-- `mcp_server.py` exposes the MCP stdio server and owns optional artifact file output
+- `mcp_server.py` exposes the optional SDK server; application and writer layers own analysis and publication
 - `adapters/` contains filesystem, parser, projector, and writer implementations
 - `application/` contains use-case orchestration and exit-code policy
 - `domain/` contains analysis, file, node, and error models

@@ -3,13 +3,13 @@ repos:
     hooks:
       - id: ruff-format
         name: ruff format (uv.lock)
-        entry: uv run --locked --group dev ruff format --check .
+        entry: uv run --locked --group dev --extra mcp ruff format --check .
         language: system
         pass_filenames: false
         always_run: true
       - id: ruff
         name: ruff check (uv.lock)
-        entry: uv run --locked --group dev ruff check .
+        entry: uv run --locked --group dev --extra mcp ruff check .
         language: system
         pass_filenames: false
         always_run: true
