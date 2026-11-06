@@ -1,13 +1,13 @@
 # RepoGPT Roadmap
 
-This roadmap starts after the current 0.11.0 source baseline (unreleased):
+This roadmap starts after the current 0.12.0 source baseline:
 
 - CLI and MCP stdio interfaces
 - AST export (`schema_version: "3"`)
 - `code-units` (`schema_version: "6"`)
 - fully closed public JSON Schemas for AST v3 and `code-units` v6
 - golden artifact schema validation in integration tests
-- MCP 2025-06-18 native structured results, output schemas, configurable comparison, and atomic artifact file output
+- Native SDK MCP targeting 2025-11-25, structured results, output schemas, configurable comparison, and atomic artifact file output
 - public flat/structured bundle helpers and comparison for `flat_rag_v3` and `structured_rag_v3`, with provenance-aware deduplicated model context
 
 The items below are forward-looking only.

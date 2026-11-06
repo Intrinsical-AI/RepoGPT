@@ -365,6 +365,26 @@ The Mypy hook delegates to `make type`, covering the package, tests, `scripts/`,
 
 Development tools belong to the `dev` dependency group and are not published as a package extra. CI requires `make validate` to pass on Python 3.10 through 3.14. Python 3.15 runs as a non-blocking experimental job with prereleases allowed.
 
+The separate blocking package job checks out the exact PR head or push revision,
+builds the wheel and sdist once, and accepts those bytes in fresh environments
+outside the checkout. `make build smoke-package` runs this gate locally. It checks
+base-install CLI/optional-extra behavior, installed Python/schema/`py.typed` bytes,
+AST v3/code-units v6, and native SDK stdio tools including CLI/export byte parity
+and SHA-256 publication receipts. It also rebuilds and probes a wheel from the
+retained sdist. Receipts remain in `dist/package-evidence`; scratch environments
+use `RUNNER_TEMP` or the system temporary directory, with `--work-root` available
+on `scripts/smoke_package.py`. The gate resolves and checks scratch paths outside
+the checkout, then records those paths and confirms removal. Installed operations and their console children deny Internet
+sockets and DNS through self-tested audit guards, with local Unix sockets allowed.
+Receipts distinguish base and MCP installs, preserve the source-file publication
+refusal/session recovery probe, and confirm temporary-environment cleanup.
+Dependency installation may access the package index. CI uploads the original distributions, checksums, source revision,
+tree and file hashes, installed file origins/hashes, JSON receipt, and JUnit result
+under a revision/run/attempt-specific artifact for 30 days. These are CI artifacts;
+release publication is a separate action. Python 3.15 currently fails dependency
+installation because locked `rpds-py` uses PyO3 with a Python 3.14 maximum; the
+experimental job retains that limitation without bypassing the version check.
+
 Setup and common commands:
 
 ```bash

@@ -14,6 +14,8 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -28,3 +30,39 @@ jobs:
             ~/.cache/uv
           key: ${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('uv.lock') }}
       - run: make validate
+
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      CI_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.CI_SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          version: "0.11.11"
+      - name: Build retained wheel and sdist once
+        run: make build
+      - name: Accept exact distributions outside the checkout
+        run: make smoke-package
+      - name: Retain exact distributions and acceptance receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: repogpt-package-${{ env.CI_SOURCE_SHA }}-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/package-evidence/SHA256SUMS
+            dist/package-evidence/receipt.json
+            dist/package-evidence/junit.xml
