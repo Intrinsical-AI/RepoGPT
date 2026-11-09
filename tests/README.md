@@ -13,6 +13,7 @@ Current layout:
 Install the dev environment before running the full suite; schema validation tests use the dev-only `jsonschema` dependency.
 
 ```bash
+make install-hooks
 uv sync --locked --group dev --extra mcp
 ```
 
@@ -22,7 +23,7 @@ Run the full suite with:
 uv run --extra mcp pytest -q
 ```
 
-Run the complete local/CI gate with `make validate` (locked sync, local pre-commit hooks, and pytest). Hooks use Ruff and Mypy from `uv.lock`; use `make format` to apply formatting.
+Run the complete local/CI gate with `make validate` (separate stable hook installation, locked source sync, local hooks, and pytest). Hooks use Ruff and Mypy from `uv.lock`; use `make format` to apply formatting.
 
 Regression coverage includes control-flow traversal, duplicate symbol identities, physical lines and encoding, Markdown fences/links, MCP stdio recovery and argument validation, safe replacement selection, filesystem errors, atomic output, and strict retrieval inputs. Filesystem fault injection is deterministic and does not require root privileges or external indexes.
 
@@ -54,3 +55,5 @@ uv run --extra mcp pytest -q tests/integration/test_output_transport.py
 uv run --extra mcp pytest -q tests/unit/test_clean_artifacts.py
 uv run --extra mcp pytest -q tests/unit/utils/test_retrieval_profiles.py
 ```
+
+Hook migration regression fixtures use a fake `uv` and Make to check alias/containment refusal, install-before-source-sync ordering under `-j`, and preservation of the caller's source selector in the nested `make type` hook. No real synchronization or network occurs in those fixtures.

@@ -337,7 +337,7 @@ def main() -> None:
                 return await check_native_interfaces(arguments.output.parent)
 
         receipt.update(anyio.run(check))
-        assert importlib.metadata.version("mcp") == "1.28.1"
+        assert importlib.metadata.version("mcp") == "1.30.0"
         assert importlib.metadata.version("anyio") == "4.14.2"
     assert not guard["denied_operations"]
     receipt["socket_guard"] = guard
