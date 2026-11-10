@@ -2,7 +2,7 @@
 
 ## 0.12.1
 
-- Update the optional MCP SDK to 1.30.0, preserve AnyIO 4.14.2, and declare certifi/PyJWT security floors in that extra. AST v3, code-units v6 and CLI/MCP output contracts remain unchanged.
+- Update the optional MCP SDK to 1.30.0, preserve AnyIO 4.14.2, and declare certifi/PyJWT/cryptography/pydantic-settings security floors in that extra. AST v3, code-units v6 and CLI/MCP output contracts remain unchanged.
 - Isolate pre-commit and fixed filelock/virtualenv tooling in a stable Python 3.12 hook environment, installed before source sync; preserve Python 3.10 runtime and test compatibility.
 - Refresh only the targeted dependency closure and its marker references; retain the existing package and native SDK acceptance routes.
 

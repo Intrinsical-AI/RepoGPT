@@ -1005,8 +1005,11 @@ dependencies = [
 mcp = [
     { name = "anyio" },
     { name = "certifi" },
+    { name = "cryptography" },
     { name = "jsonschema" },
     { name = "mcp" },
+    { name = "pydantic-settings", version = "2.15.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "pydantic-settings", version = "2.16.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pyjwt" },
 ]
 
@@ -1027,9 +1030,11 @@ hooks = [
 requires-dist = [
     { name = "anyio", marker = "extra == 'mcp'", specifier = "==4.14.2" },
     { name = "certifi", marker = "extra == 'mcp'", specifier = ">=2026.10.19" },
+    { name = "cryptography", marker = "extra == 'mcp'", specifier = ">=50.0.0" },
     { name = "jsonschema", marker = "extra == 'mcp'", specifier = ">=4.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = "==1.30.0" },
     { name = "pathspec", specifier = ">=0.12.1" },
+    { name = "pydantic-settings", marker = "extra == 'mcp'", specifier = ">=2.14.2" },
     { name = "pyjwt", marker = "extra == 'mcp'", specifier = ">=2.15.0" },
     { name = "structlog", specifier = ">=24.1.0" },
 ]

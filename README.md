@@ -485,4 +485,4 @@ uv run pytest -q tests/integration/test_artifact_schemas.py
 
 [MIT](LICENSE)
 
-The optional `mcp` extra pins SDK 1.30.0 and AnyIO 4.14.2, with `certifi>=2026.10.19` and `PyJWT>=2.15.0` security floors for downstream installation. Base installs retain only the analysis dependencies. These dependency changes preserve AST v3, code-units v6, and the existing stdio tool envelopes; controlled fixtures do not establish arbitrary remote-server or HTTP authentication safety.
+The optional `mcp` extra pins SDK 1.30.0 and AnyIO 4.14.2, with `certifi>=2026.10.19`, `PyJWT>=2.15.0`, `cryptography>=50.0.0`, and `pydantic-settings>=2.14.2` security floors for downstream installation. Base installs retain only the analysis dependencies. These dependency changes preserve AST v3, code-units v6, and the existing stdio tool envelopes; controlled fixtures do not establish arbitrary remote-server or HTTP authentication safety.
