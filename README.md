@@ -28,7 +28,7 @@ Key properties:
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for contract and architecture details, and [ROADMAP.md](ROADMAP.md) for future work only.
 
-This source tree is **RepoGPT 0.12.0**. AST v3 and code-units v6 are breaking contracts: regenerate exports and update consumers together. The retrieval loader accepts code-units v6 only.
+This source tree is **RepoGPT 0.12.1**. AST v3 and code-units v6 are breaking contracts: regenerate exports and update consumers together. The retrieval loader accepts code-units v6 only.
 
 ## Installation
 
@@ -39,7 +39,7 @@ uv sync
 ```
 
 RepoGPT uses `uv` as the supported local and CI bootstrap path.
-For development validation tools such as `pre-commit`, `mypy`, and schema tests, install the dev dependency group with `uv sync --locked --group dev`.
+For development, first run `make install-hooks` to install the native hook from a separate Python 3.12 tools environment, then run `uv sync --locked --group dev --extra mcp`. Ruff, Mypy and schema tests remain in `dev`; pre-commit and its fixed file-lock/environment tooling belong to `hooks`, which requires Python 3.11 or newer. Runtime and source testing still support Python 3.10.
 
 ## Quick start
 
@@ -363,7 +363,7 @@ Local hooks invoke the Ruff and Mypy versions in `uv.lock`; they do not install 
 
 The Mypy hook delegates to `make type`, covering the package, tests, `scripts/`, and root `benchmark_*.py` helpers.
 
-Development tools belong to the `dev` dependency group and are not published as a package extra. CI requires `make validate` to pass on Python 3.10 through 3.14. Python 3.15 runs as a non-blocking experimental job with prereleases allowed.
+Development tools belong to dependency groups and are not published as package extras. `make validate` installs the stable hook before synchronizing the source environment; nested hooks retain the caller's `UV_PROJECT_ENVIRONMENT`. `HOOK_ENV` defaults to `.cache/hooks-env` and must be separate from the source environment, including symlink and parent/child aliases. `HOOK_PYTHON` defaults to `3.12`. CI requires `make validate` to pass on Python 3.10 through 3.14. Python 3.15 runs as a non-blocking experimental job with prereleases allowed.
 
 The separate blocking package job checks out the exact PR head or push revision,
 builds the wheel and sdist once, and accepts those bytes in fresh environments
@@ -388,21 +388,23 @@ experimental job retains that limitation without bypassing the version check.
 Setup and common commands:
 
 ```bash
-uv sync --locked --group dev
-uv run --locked --group dev pre-commit install
-uv run --locked --group dev pre-commit run --all-files
-uv run --locked --group dev pytest -q
+make install-hooks
+uv sync --locked --group dev --extra mcp
+make pre-commit
+make test
 ```
 
 ### Make targets
 
 | Target | Command | Description |
 | --- | --- | --- |
-| `make lint` | `uv run --locked --group dev ruff check .` | Lint the codebase |
-| `make type` | `uv run --locked --group dev mypy src tests scripts benchmark_*.py` | Run type checks |
-| `make test` | `uv run --locked --group dev pytest -q` | Run the test suite |
+| `make lint` | `uv run --locked --group dev --extra mcp ruff check .` | Lint the codebase |
+| `make type` | `uv run --locked --group dev --extra mcp mypy src tests scripts benchmark_*.py` | Run type checks |
+| `make test` | `uv run --locked --group dev --extra mcp pytest -q` | Run the test suite |
 | `make format` | `uv run --locked --group dev ruff format .` | Apply formatting |
-| `make validate` | locked sync, hooks, pytest | Run the local and CI gate |
+| `make install-hooks` | isolated Python 3.12 hook sync and native installation | Install hooks before source sync |
+| `make pre-commit` | hook installation, source sync, hooks | Run mandatory local hooks |
+| `make validate` | stable hook installation, source sync, hooks, pytest | Run the local and CI gate |
 | `make clean` | `scripts/clean_artifacts.py` | Remove Python bytecode and pytest caches within the cleanup boundary |
 | `make distclean` | `scripts/clean_artifacts.py --dist` | Also remove root build/distribution/tool caches and root/`src` egg-info |
 | `make repogpt` | `uv run --locked repogpt $(ARGS)` | Show CLI help by default (`ARGS=--help`); pass `ARGS` to analyze a repository |
@@ -482,3 +484,5 @@ uv run pytest -q tests/integration/test_artifact_schemas.py
 ## License
 
 [MIT](LICENSE)
+
+The optional `mcp` extra pins SDK 1.30.0 and AnyIO 4.14.2, with `certifi>=2026.10.19`, `PyJWT>=2.15.0`, `cryptography>=50.0.0`, and `pydantic-settings>=2.14.2` security floors for downstream installation. Base installs retain only the analysis dependencies. These dependency changes preserve AST v3, code-units v6, and the existing stdio tool envelopes; controlled fixtures do not establish arbitrary remote-server or HTTP authentication safety.
