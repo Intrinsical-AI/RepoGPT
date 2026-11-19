@@ -23,8 +23,9 @@ def _run(args: list[str], repo_path: Path = DATA_ROOT) -> subprocess.CompletedPr
     env["PYTHONPATH"] = (
         f"{SRC_ROOT}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else str(SRC_ROOT)
     )
+    target = [] if "--stdout" in args or "--output" in args else ["--stdout"]
     return subprocess.run(
-        [sys.executable, "-m", "repogpt.app.cli", *args, str(repo_path)],
+        [sys.executable, "-m", "repogpt.app.cli", "export", *args, *target, str(repo_path)],
         capture_output=True,
         text=True,
         cwd=REPO_ROOT,
@@ -78,8 +79,9 @@ def test_cli_rejects_blank_repo_path_before_replacement(tmp_path: Path, repo_pat
             sys.executable,
             "-m",
             "repogpt.app.cli",
+            "export",
             repo_path,
-            "--emit",
+            "--projection",
             "code-units",
             "--include-tests",
             "--replace-scope",
@@ -165,7 +167,7 @@ def test_cli_code_units_matches_golden_fixture() -> None:
             "--stdout",
             "--format",
             "json",
-            "--emit",
+            "--projection",
             "code-units",
             "--include-tests",
             "--repo-key",
@@ -182,7 +184,7 @@ def test_cli_code_units_matches_golden_fixture() -> None:
 
 def test_cli_code_units_documents_are_consumable_without_metadata() -> None:
     proc = _run(
-        ["--stdout", "--format", "json", "--emit", "code-units", "--include-tests"],
+        ["--stdout", "--format", "json", "--projection", "code-units", "--include-tests"],
         CLI_FIXTURE,
     )
     assert proc.returncode == 2
@@ -279,7 +281,7 @@ def test_cli_analysis_io_error_preserves_stdout(tmp_path: Path, error_type: str)
         "raise SystemExit(code)\n"
     )
     proc = subprocess.run(
-        [sys.executable, "-c", script, str(tmp_path), "--stdout"],
+        [sys.executable, "-c", script, "export", str(tmp_path), "--stdout"],
         capture_output=True,
         text=True,
         env={**os.environ, "PYTHONPATH": str(SRC_ROOT)},
@@ -288,7 +290,7 @@ def test_cli_analysis_io_error_preserves_stdout(tmp_path: Path, error_type: str)
 
     assert proc.returncode == 3
     assert proc.stdout == "stdout remains usable\n"
-    assert "analysis aborted" in proc.stderr
+    assert "operation I/O error" in proc.stderr
     assert "input vanished" in proc.stderr
     assert "output I/O error" not in proc.stderr
     assert "unexpected error" not in proc.stderr
@@ -307,7 +309,7 @@ def test_cli_consistency_error_preserves_diagnostic_and_existing_artifact(tmp_pa
         "    raise SystemExit(main())\n"
     )
     proc = subprocess.run(
-        [sys.executable, "-c", script, str(repo), "-o", str(output)],
+        [sys.executable, "-c", script, "export", str(repo), "--output", str(output)],
         capture_output=True,
         text=True,
         env={**os.environ, "PYTHONPATH": str(SRC_ROOT)},
@@ -325,11 +327,11 @@ def test_cli_consistency_error_preserves_diagnostic_and_existing_artifact(tmp_pa
 @pytest.mark.parametrize(
     "options",
     [
-        ["--stdout", "-o", "unused.json"],
-        ["--stdout", "-o", "/dev/stdout"],
-        ["--emit", "code-units", "--flatten", "node"],
-        ["--emit", "code-units", "--flatten", "file"],
-        ["--emit", "code-units", "--format", "ndjson"],
+        ["--stdout", "--output", "unused.json"],
+        ["--stdout", "--output", "/dev/stdout"],
+        ["--projection", "code-units", "--flatten", "node"],
+        ["--projection", "code-units", "--flatten", "file"],
+        ["--projection", "code-units", "--format", "ndjson"],
     ],
 )
 def test_cli_rejects_conflicting_options_before_analysis(options: list[str]) -> None:
@@ -340,21 +342,35 @@ def test_cli_rejects_conflicting_options_before_analysis(options: list[str]) -> 
     assert "invalid repository path" not in proc.stderr
 
 
-def test_cli_dev_stdout_alias_emits_artifact(tmp_path: Path) -> None:
-    proc = _run(["-o", "/dev/stdout"], tmp_path)
-    assert proc.returncode == 0
-    assert json.loads(proc.stdout)["records"] == []
+def test_cli_rejects_dev_stdout_alias(tmp_path: Path) -> None:
+    proc = _run(["--output", "/dev/stdout"], tmp_path)
+    assert proc.returncode == 2
+    assert proc.stdout == ""
+    assert "not standard I/O" in proc.stderr
 
 
-@pytest.mark.parametrize(
-    "emit,filename", [("ast", "analysis.json"), ("code-units", "code_units.json")]
-)
-def test_cli_owns_default_output_destination(tmp_path: Path, emit: str, filename: str) -> None:
+@pytest.mark.parametrize("projection", ["ast", "code-units"])
+def test_cli_export_requires_an_explicit_destination(tmp_path: Path, projection: str) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "sample.py").write_text("value = 1\n", encoding="utf-8")
     proc = subprocess.run(
-        [sys.executable, "-m", "repogpt.app.cli", str(repo), "--emit", emit],
+        [sys.executable, "-m", "repogpt.app.cli", "export", str(repo), "--projection", projection],
+        cwd=tmp_path,
+        env={**os.environ, "PYTHONPATH": str(SRC_ROOT)},
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert proc.returncode == 2
+    assert proc.stdout == ""
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["repo"]
+
+
+def test_cli_analyze_reads_without_publication(tmp_path: Path) -> None:
+    (tmp_path / "sample.py").write_text("value = 1\n")
+    proc = subprocess.run(
+        [sys.executable, "-m", "repogpt.app.cli", "analyze", str(tmp_path)],
         cwd=tmp_path,
         env={**os.environ, "PYTHONPATH": str(SRC_ROOT)},
         capture_output=True,
@@ -362,7 +378,7 @@ def test_cli_owns_default_output_destination(tmp_path: Path, emit: str, filename
         timeout=15,
     )
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout == ""
-    payload = json.loads((tmp_path / filename).read_text(encoding="utf-8"))
-    assert payload["stats"]["ok_files"] == 1
-    assert sorted(path.name for path in repo.iterdir()) == ["sample.py"]
+    result = json.loads(proc.stdout)
+    assert result["complete"] is True
+    assert result["stats"]["ok_files"] == 1
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["sample.py"]

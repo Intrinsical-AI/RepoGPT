@@ -7,13 +7,13 @@ from unittest.mock import patch
 
 import pytest
 
-from repogpt.domain.code_units import KIND, SCHEMA_VERSION
-from repogpt.utils.retrieval_artifact import load_documents
-from repogpt.utils.retrieval_profiles import (
+from repogpt.application.retrieval import (
     assemble_flat_bundle,
     assemble_structured_bundle,
     compare_profiles,
 )
+from repogpt.domain.code_units import KIND, SCHEMA_VERSION
+from repogpt.utils.retrieval_artifact import load_documents
 
 
 def _document() -> dict[str, Any]:
@@ -73,7 +73,7 @@ def test_retrieval_never_discards_malformed_or_duplicate_documents(
 
 @pytest.mark.parametrize("top_k", [-1, True, "3", 1.5])
 def test_top_k_validation_precedes_ranking(top_k: Any) -> None:
-    with patch("repogpt.utils.retrieval_profiles.rank_documents") as rank:
+    with patch("repogpt.application.retrieval.rank_documents") as rank:
         for assemble in (assemble_flat_bundle, assemble_structured_bundle, compare_profiles):
             with pytest.raises(ValueError, match="top_k"):
                 assemble([_document()], query_text="f", top_k=top_k)

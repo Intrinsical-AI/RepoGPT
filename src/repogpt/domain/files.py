@@ -18,10 +18,13 @@ class CollectedFile:
     abs_path: Path
     relative_path: str
     extension: str
+    max_file_size: int = 2_000_000
 
     def __post_init__(self) -> None:
         if not self.relative_path:
             raise ValueError("relative_path must not be empty")
+        if self.max_file_size < 0:
+            raise ValueError("max_file_size must not be negative")
 
 
 @dataclass(frozen=True)

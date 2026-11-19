@@ -13,7 +13,7 @@ class AnalysisRequest:
     include_tests: bool = False
     supported_extensions: list[str] | None = None
     max_file_size: int = 2_000_000
-    projection: Literal["ast", "code_units"] = "ast"
+    projection: Literal["ast", "code-units"] = "ast"
     format: Literal["json", "ndjson"] = "json"
     flatten_kind: Literal["node", "file"] = "node"
     fail_fast: bool = False

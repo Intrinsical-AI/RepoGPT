@@ -11,11 +11,12 @@ from typing import Any, Literal
 
 import pytest
 
-from repogpt.adapters.writers.artifact_writer import ArtifactWriter, ArtifactWriteReceipt
+from repogpt.adapters.writers.artifact_writer import ArtifactWriter
 from repogpt.domain.analysis import (
     AstProjection,
     CodeUnitsProjection,
 )
+from repogpt.domain.operations import ArtifactWriteReceipt
 
 
 def test_writer_writes_ast_json_to_file(tmp_path: Path) -> None:

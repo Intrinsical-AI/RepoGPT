@@ -6,15 +6,15 @@ from typing import Any
 
 import pytest
 
-import repogpt.utils.retrieval_profiles as retrieval_profiles
-from repogpt.domain.analysis import AnalysisRequest
-from repogpt.runtime import build_analyze_repo
-from repogpt.utils.retrieval_profiles import (
+import repogpt.application.retrieval as retrieval_profiles
+from repogpt.application.retrieval import (
     _expand_bundle,
     assemble_flat_bundle,
     compare_profiles,
     rank_documents,
 )
+from repogpt.domain.analysis import AnalysisRequest
+from repogpt.runtime import build_analyze_repo
 
 
 def _document(**overrides: Any) -> dict[str, Any]:
@@ -222,7 +222,7 @@ def test_public_structured_context_deduplicates_a_real_nested_export(tmp_path: P
     content = 'class Demo:\n    def method(self):\n        return "unique_method_context"\n'
     (tmp_path / "sample.py").write_text(content, encoding="utf-8")
     _, projection = build_analyze_repo().run(
-        AnalysisRequest(repo_root=tmp_path, projection="code_units")
+        AnalysisRequest(repo_root=tmp_path, projection="code-units")
     )
     documents = projection.json_payload["documents"]
     original = deepcopy(documents)

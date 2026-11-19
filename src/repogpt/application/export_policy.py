@@ -9,13 +9,15 @@ REPO_KEY_PATTERN = r"[a-z0-9][a-z0-9._-]{0,127}"
 
 
 def validate_request(request: AnalysisRequest, supported_extensions: set[str]) -> None:
+    if request.projection not in {"ast", "code-units"}:
+        raise InvalidRequestError("projection must be ast or code-units")
     if request.repo_key is not None and re.fullmatch(REPO_KEY_PATTERN, request.repo_key) is None:
         raise InvalidRequestError(f"repo_key must match {REPO_KEY_PATTERN}")
-    if request.projection != "code_units" and (
+    if request.projection != "code-units" and (
         request.repo_key is not None or request.replace_scope
     ):
         raise InvalidRequestError("repo_key and replace_scope require code-units emission")
-    if request.projection == "code_units" and request.format != "json":
+    if request.projection == "code-units" and request.format != "json":
         raise InvalidRequestError("code-units only supports JSON")
     if request.replace_scope:
         extensions = (

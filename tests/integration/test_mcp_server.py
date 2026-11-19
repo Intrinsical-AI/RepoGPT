@@ -19,11 +19,11 @@ from mcp import ClientSession, StdioServerParameters, types
 from mcp.client.stdio import stdio_client
 from mcp.shared.exceptions import McpError
 
+from repogpt.domain.operations import OperationResult
 from repogpt.mcp_server import (
     MAX_RESPONSE_BYTES,
     TOOLS,
     SDKDiagnosticFilter,
-    ToolOutcome,
     create_server,
 )
 
@@ -81,9 +81,10 @@ def test_native_export_matches_cli_bytes_and_verified_receipt(
             sys.executable,
             "-m",
             "repogpt.app.cli",
+            "export",
             str(FIXTURE),
             "--stdout",
-            "--emit",
+            "--projection",
             projection,
             "--format",
             format,
@@ -157,9 +158,10 @@ def test_inline_analysis_matches_cli(tmp_path: Path) -> None:
             sys.executable,
             "-m",
             "repogpt.app.cli",
+            "export",
             str(tmp_path),
             "--stdout",
-            "--emit",
+            "--projection",
             "code-units",
             "--repo-key",
             "sample",
@@ -213,8 +215,8 @@ def test_expected_failure_is_structured(kind: str, tmp_path: Path) -> None:
 
 
 def test_comparison_native_parity(tmp_path: Path) -> None:
+    from repogpt.application.retrieval import compare_profiles
     from repogpt.utils.retrieval_artifact import load_documents
-    from repogpt.utils.retrieval_profiles import compare_profiles
 
     output = tmp_path / "units.json"
     _call(
@@ -314,7 +316,13 @@ def test_large_failure_evidence_keeps_export_receipt_and_full_native_artifact(
     result, artifact = analyzer.run(analyzer.request(repo_path=str(FIXTURE)))
     artifact.json_payload["failures"][0]["error"] = "failure evidence " * 20_000
     destination = tmp_path / "partial.json"
-    with patch("repogpt.mcp_server.build_analyze_repo", return_value=analyzer):
+    from repogpt.adapters.writers.artifact_writer import ArtifactWriter
+    from repogpt.application.operations import RepositoryOperations
+
+    with patch(
+        "repogpt.mcp_server.build_repository_operations",
+        return_value=RepositoryOperations(analyzer, ArtifactWriter()),
+    ):
         with patch.object(analyzer, "run", return_value=(result, artifact)):
             response = _call(
                 "repogpt_export", {"repo_path": str(FIXTURE), "output_path": str(destination)}
@@ -331,14 +339,14 @@ def test_large_failure_evidence_keeps_export_receipt_and_full_native_artifact(
 def test_internal_and_output_failures_are_sanitized(
     failure: str, caplog: pytest.LogCaptureFixture
 ) -> None:
-    def broken(**_: Any) -> ToolOutcome:
+    def broken(**_: Any) -> OperationResult:
         if failure == "exception":
             raise RuntimeError("PRIVATE-CONTENT")
         if failure == "value_error":
             raise ValueError("PRIVATE-CONTENT")
         if failure == "nonfinite":
-            return ToolOutcome({"error": {"code": "x", "message": float("nan")}})
-        return ToolOutcome({"PRIVATE-CONTENT": "x"})
+            return OperationResult({"error": {"code": "x", "message": float("nan")}})
+        return OperationResult({"PRIVATE-CONTENT": "x"})
 
     with patch.dict(TOOLS, {"repogpt_analyze": replace(TOOLS["repogpt_analyze"], handler=broken)}):
         with pytest.raises(McpError) as error:
@@ -374,11 +382,11 @@ def test_worker_keeps_slot_until_cancelled_work_finishes() -> None:
     release = threading.Event()
     seen: list[int] = []
 
-    def blocking(**_: Any) -> ToolOutcome:
+    def blocking(**_: Any) -> OperationResult:
         seen.append(1)
         started.set()
         release.wait(5)
-        return ToolOutcome({"error": {"code": "fixture", "message": "done"}})
+        return OperationResult({"error": {"code": "fixture", "message": "done"}})
 
     async def execute() -> None:
         server = create_server()

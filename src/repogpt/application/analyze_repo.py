@@ -14,8 +14,13 @@ from repogpt.domain.analysis import (
     AstProjection,
     CodeUnitsProjection,
 )
-from repogpt.domain.errors import ArtifactConsistencyError, InvalidRepoError, ParseFailure
-from repogpt.domain.files import ParsedFile
+from repogpt.domain.errors import (
+    ArtifactConsistencyError,
+    FileAdmissionSkipped,
+    InvalidRepoError,
+    ParseFailure,
+)
+from repogpt.domain.files import ParsedFile, SkippedFile
 from repogpt.ports.collector import CollectorPort
 from repogpt.ports.loader import LoaderPort
 from repogpt.ports.parsers import ParserRegistryPort
@@ -60,7 +65,7 @@ class AnalyzeRepo:
                 extensions,
                 supported_extensions=self.parser_registry.supported_extensions(),
             ),
-            projection="code_units" if projection == "code-units" else "ast",
+            projection=projection,
             format=format,
             flatten_kind=flatten,
             fail_fast=fail_fast,
@@ -85,7 +90,11 @@ class AnalyzeRepo:
         stopped_early = False
 
         for collected_file in collected_files:
-            loaded_file = self.loader.load(collected_file)
+            try:
+                loaded_file = self.loader.load(collected_file)
+            except FileAdmissionSkipped as exc:
+                skipped_files.append(SkippedFile(collected_file.relative_path, exc.reason))
+                continue
             parser = self.parser_registry.parser_for(loaded_file.extension)
             if loaded_file.decode_error is not None:
                 parsed_file = ParsedFile(
@@ -138,7 +147,7 @@ class AnalyzeRepo:
             )
 
         projection: AstProjection | CodeUnitsProjection
-        if request.projection == "code_units":
+        if request.projection == "code-units":
             projection = self.code_units_projector.project(result, request)
             if request.replace_scope:
                 validate_replacement(result, projection)

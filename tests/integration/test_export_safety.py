@@ -34,7 +34,7 @@ from repogpt.runtime import build_analyze_repo
 def _export(root: Path, output: Path, **options: Any) -> dict[str, Any]:
     request = AnalysisRequest(
         repo_root=root,
-        projection="code_units",
+        projection="code-units",
         **options,
     )
     _, projection = build_analyze_repo().run(request)
@@ -136,7 +136,7 @@ def test_complete_replacement_respects_known_ignores(tmp_path: Path) -> None:
     assert {doc["path"] for doc in payload["documents"]} == {"test_sample.py", "guide.md"}
 
 
-@pytest.mark.parametrize("stage", ["walk", "stat", "probe", "load", "ignore"])
+@pytest.mark.parametrize("stage", ["walk", "stat", "load", "ignore"])
 def test_read_failure_aborts_without_overwriting(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str
 ) -> None:
@@ -161,18 +161,15 @@ def test_read_failure_aborts_without_overwriting(
             return original_stat(path, **kwargs)
 
         monkeypatch.setattr(Path, "stat", fail_stat)
-    elif stage == "probe":
-
-        def fail_probe(path: Path) -> bool:
-            raise PermissionError("cannot probe")
-
-        monkeypatch.setattr("repogpt.adapters.fs.collector.is_likely_binary", fail_probe)
     elif stage == "load":
+        original_open = os.open
 
-        def fail_read(path: Path) -> bytes:
+        def fail_read(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+            if Path(path) != sample:
+                return original_open(path, flags, *args, **kwargs)
             raise PermissionError("cannot load")
 
-        monkeypatch.setattr(Path, "read_bytes", fail_read)
+        monkeypatch.setattr("repogpt.adapters.fs.loader.os.open", fail_read)
     else:
         (root / ".repogptignore").mkdir()
     with pytest.raises(CollectionFailure):
@@ -266,7 +263,15 @@ def test_cli_and_mcp_distinguish_invalid_selection_and_unsafe_result(
     monkeypatch.setattr(
         sys,
         "argv",
-        ["repogpt", str(tmp_path), "--emit", "code-units", "--replace-scope", "--stdout"],
+        [
+            "repogpt",
+            "export",
+            str(tmp_path),
+            "--projection",
+            "code-units",
+            "--replace-scope",
+            "--stdout",
+        ],
     )
     with pytest.raises(SystemExit) as invalid:
         main()

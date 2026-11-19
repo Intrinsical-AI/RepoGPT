@@ -7,12 +7,12 @@ from typing import Any, Literal
 
 import pytest
 
+from repogpt.application.retrieval import compare_profiles
 from repogpt.domain.analysis import (
     AnalysisRequest,
     AnalysisResult,
 )
 from repogpt.runtime import build_analyze_repo
-from repogpt.utils.retrieval_profiles import compare_profiles
 from repogpt.utils.tree_utils import iter_nodes
 
 
@@ -21,7 +21,7 @@ def _analyze(
 ) -> tuple[AnalysisResult, dict[str, Any]]:
     (tmp_path / filename).write_bytes(source.encode("utf-8") if isinstance(source, str) else source)
     result, projection = build_analyze_repo().run(
-        AnalysisRequest(repo_root=tmp_path, projection="code_units")
+        AnalysisRequest(repo_root=tmp_path, projection="code-units")
     )
     return result, projection.json_payload
 
@@ -246,7 +246,7 @@ def test_relative_import_level_is_preserved(tmp_path: Path) -> None:
     assert [node.attributes["is_relative"] for node in root.children] == [False, True, True, True]
 
 
-@pytest.mark.parametrize("projection", ["ast", "code_units"])
+@pytest.mark.parametrize("projection", ["ast", "code-units"])
 @pytest.mark.parametrize(
     "source",
     [
@@ -256,7 +256,7 @@ def test_relative_import_level_is_preserved(tmp_path: Path) -> None:
     ],
 )
 def test_same_line_python_imports_do_not_abort_export(
-    tmp_path: Path, projection: Literal["ast", "code_units"], source: str
+    tmp_path: Path, projection: Literal["ast", "code-units"], source: str
 ) -> None:
     (tmp_path / "sample.py").write_text(source, encoding="utf-8")
     result, artifact = build_analyze_repo().run(
