@@ -4,8 +4,8 @@ RepoGPT turns a source tree into deterministic structural artifacts for humans, 
 
 Primary public interfaces today:
 
-- CLI: `repogpt`
-- MCP stdio server: `repogpt-mcp`
+- CLI: `repogpt analyze|export|compare|mcp`
+- MCP stdio server: `repogpt mcp`
 
 Runtime pipeline:
 
@@ -28,7 +28,7 @@ Key properties:
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for contract and architecture details, and [ROADMAP.md](ROADMAP.md) for future work only.
 
-This source tree is **RepoGPT 0.12.1**. AST v3 and code-units v6 are breaking contracts: regenerate exports and update consumers together. The retrieval loader accepts code-units v6 only.
+This source tree is **RepoGPT 0.13.0**. The CLI has four explicit commands and one executable, with no aliases. AST v3 and code-units v6 artifact contracts are retained. The retrieval loader accepts code-units v6 only.
 
 ## Installation
 
@@ -44,31 +44,34 @@ For development, first run `make install-hooks` to install the native hook from 
 ## Quick start
 
 ```bash
-# analyze a repository and write AST JSON to a file
-uv run repogpt path-to-project/ -o analysis.json
+# inspect without publishing an artifact
+uv run repogpt analyze path-to-project/
+
+# publish AST JSON to an explicit destination
+uv run repogpt export path-to-project/ --output analysis.json
 
 # stream AST NDJSON to stdout
-uv run repogpt path-to-project/ --format ndjson --flatten file --stdout
+uv run repogpt export path-to-project/ --format ndjson --flatten file --stdout
 
 # emit retrieval-oriented code-units JSON
-uv run repogpt path-to-project/ --emit code-units --stdout
+uv run repogpt export path-to-project/ --projection code-units --stdout
 
 # request a complete replacement artifact with a portable repository identity
-uv run repogpt path-to-project/ --emit code-units --repo-key my-project --include-tests --replace-scope -o code_units.json
+uv run repogpt export path-to-project/ --projection code-units --repo-key my-project --include-tests --replace-scope --output code_units.json
 
 # compare the two built-in retrieval profiles over a code-units artifact
-uv run python benchmark_retrieval_profiles.py code_units.json "helper"
+uv run repogpt compare code_units.json "helper"
 ```
 
 ## CLI reference
 
 | Flag | Default | Description |
 | --- | --- | --- |
-| `--emit {ast,code-units}` | `ast` | `ast` emits the structural export. `code-units` emits the retrieval-oriented projection. |
+| `--projection {ast,code-units}` | `ast` | `ast` emits the structural export. `code-units` emits the retrieval-oriented projection. |
 | `--flatten {node,file}` | `node` | AST only. `node` emits every node as a flat record; `file` emits one root record per file containing its complete nested subtree. |
 | `--format {json,ndjson}` | `json` | AST supports `json` and `ndjson`. `code-units` supports `json` only. |
 | `--stdout` | off | Write the artifact to STDOUT instead of a file. |
-| `-o, --output PATH` | depends on projection | Defaults to `analysis.json` for AST and `code_units.json` for `code-units`. |
+| `--output PATH` | required alternative to `--stdout` | Publish an artifact to an explicit regular-file destination. |
 | `--extensions "py,md"` | all supported parsers | Comma-separated, case-insensitive whitelist of enabled languages. |
 | `--include-tests` | off | Include test paths and filenames described under collection rules. |
 | `--log-level {INFO,DEBUG}` | `INFO` | Structured log level for STDERR output. |
@@ -78,10 +81,11 @@ uv run python benchmark_retrieval_profiles.py code_units.json "helper"
 
 Notes:
 
-- `--emit code-units` only supports `--format json`.
-- An explicit `--flatten` with `--emit code-units` is rejected.
-- `--stdout` and `-o` are mutually exclusive, including `--stdout -o /dev/stdout`.
-- Passing `-o /dev/stdout` behaves like `--stdout`.
+- `--projection code-units` only supports `--format json`.
+- An explicit `--flatten` with `--projection code-units` is rejected.
+- `analyze` emits a summary, or the native artifact with `--response-mode inline`, without file publication.
+- `export` requires exactly one of `--output` and `--stdout`; there is no implicit destination.
+- Standard-I/O path aliases such as `/dev/stdout` are rejected; use `--stdout`.
 - AST JSON uses `records`; `code-units` JSON uses `documents`.
 - `--extensions` accepts parser extensions such as `py` and `md`; values are normalized case-insensitively.
 - Unsupported language values and blank repository paths fail during argument validation.
@@ -98,7 +102,7 @@ Notes:
 
 Parse/decode failures normally emit an artifact and return `2`, or `1` with `--fail-fast`. An explicit replacement request takes precedence: incomplete results return `3` without emitting an artifact. Collection and input-read failures also return `3` before any output. File output is written to a temporary file in the destination directory, flushed and synchronized with `fsync`, then atomically replaced; a failed write preserves the prior artifact. Existing file permissions are retained, while new files follow the process umask.
 
-Closing a pipe early, as with `repogpt ... --stdout | head -c 200`, returns `0` without a write-error diagnostic or shutdown traceback. This status acknowledges the consumer's early close; it does not certify delivery of a complete artifact or a complete analysis. Other output I/O errors return `3` with one destination-specific diagnostic.
+Closing a pipe early, as with `repogpt export ... --stdout | head -c 200`, returns `0` without a write-error diagnostic or shutdown traceback. This status acknowledges the consumer's early close; it does not certify delivery of a complete artifact or a complete analysis. Other output I/O errors return `3` with one destination-specific diagnostic.
 
 Input I/O errors are reported as analysis failures; internal consistency failures have a dedicated diagnostic. Neither uses output-stream cleanup. The exit codes above apply to both cases.
 
@@ -123,7 +127,7 @@ Additional collection rules:
 
 The test-name rule is case-sensitive. `env/`, `build/`, and `dist/` are indexable unless excluded in `.repogptignore`; this repository explicitly excludes its own generated copies there. A directory containing a regular `pyvenv.cfg` is pruned as a virtual environment regardless of its name. RepoGPT does not read `.gitignore`.
 
-A missing `.repogptignore` is allowed. An existing file that cannot be read or parsed aborts collection; its exclusions are never silently disabled. Traversal, stat, binary-probe, and source-read errors also abort the run.
+A missing `.repogptignore` is allowed. An existing file that cannot be read or parsed aborts collection; its exclusions are never silently disabled. Traversal, stat, and source-read errors also abort the run.
 
 Hidden files and directories are not excluded by default unless they match one of the built-in ignores or a `.repogptignore` rule.
 
@@ -239,8 +243,7 @@ Install the optional SDK dependencies before starting the native server:
 
 ```bash
 uv sync --extra mcp
-uv run --extra mcp repogpt-mcp
-# or: uv run --extra mcp python -m repogpt.mcp_server
+uv run --extra mcp repogpt mcp
 ```
 
 The official MCP SDK owns stdio framing, initialization, standard negotiation,
@@ -313,7 +316,7 @@ The public Python helpers return the original selected documents in `items` and 
 from pathlib import Path
 
 from repogpt.utils.retrieval_artifact import load_documents
-from repogpt.utils.retrieval_profiles import assemble_flat_bundle, assemble_structured_bundle
+from repogpt.application.retrieval import assemble_flat_bundle, assemble_structured_bundle
 
 documents = load_documents(Path("code_units.json"))
 flat = assemble_flat_bundle(documents, query_text="helper", top_k=3)
@@ -323,18 +326,13 @@ model_context = structured["context"]["text"]
 
 Use `context.text` from either helper when constructing a model prompt. It merges overlapping physical lines within the same `(scope, snapshot_id, source_id, path, metadata.file.sha256)` group; different provenance stays separate. Module `content_ranges` place residual text at its original source coordinates. Conflicting text for the same source line is rejected. Segments record inclusive source intervals, contributing external IDs, and character offsets into the rendered text. Raw `items` and exported content are unchanged, including nested class/method and heading/subheading spans.
 
-`context_characters` includes the rendered source headers and separators. `estimated_tokens` is `ceil(len(context.text) / 4)`, a rough character-based estimate. MCP and the diagnostic script return comparison summaries, not the complete context text. These helpers do not modify downstream RAG prompt builders; callers supply the selected context explicitly.
+`context_characters` includes the rendered source headers and separators. `estimated_tokens` is `ceil(len(context.text) / 4)`, a rough character-based estimate. MCP and `repogpt compare` return comparison summaries, not the complete context text. These helpers do not modify downstream RAG prompt builders; callers supply the selected context explicitly.
 
-`--top-k` accepts integers greater than or equal to zero; zero and queries without matches produce empty bundles. Ranking ignores empty structural modules, uses exact symbols only when present, and breaks score ties by shorter qualified name and then ascending external ID. The script and MCP comparison share one loader that requires a code-units v6 envelope, validates retrieval fields, and rejects malformed entries and duplicate `external_id` values. Context assembly additionally checks selected documents' provenance, physical spans, and residual ranges. Comparison ranks once and shares seeds across profiles; it is not a production relevance evaluation.
+`--top-k` accepts integers greater than or equal to zero; zero and queries without matches produce empty bundles. Ranking ignores empty structural modules, uses exact symbols only when present, and breaks score ties by shorter qualified name and then ascending external ID. The CLI and MCP comparison share one loader that requires a code-units v6 envelope, validates retrieval fields, and rejects malformed entries and duplicate `external_id` values. Context assembly additionally checks selected documents' provenance, physical spans, and residual ranges. Comparison ranks once and shares seeds across profiles; it is not a production relevance evaluation.
 
 ## Developer benchmark scripts
 
-RepoGPT includes two root-level diagnostic scripts:
-
-- `benchmark_retrieval_profiles.py`: compares `flat_rag_v3` and `structured_rag_v3` over a `code-units` artifact
-- `benchmark_tree_utils.py`: runs synthetic measurements for tree traversal, flattening, and Python comment association
-
-These scripts are developer diagnostics, not public runtime interfaces.
+`benchmark_tree_utils.py` measures tree traversal, flattening, and Python comment association. Retrieval profile comparison is available through `repogpt compare` and its native MCP operation.
 
 ## Logging and diagnostics
 
@@ -343,7 +341,7 @@ RepoGPT keeps data and logs separate:
 - artifact data -> STDOUT or output file
 - logs -> STDERR
 
-Example STDERR from `repogpt tests/fixtures/cli_repo --stdout --include-tests` (exit `2`):
+Example STDERR from `repogpt export tests/fixtures/cli_repo --stdout --include-tests` (exit `2`):
 
 ```text
 2026-10-19 00:13:43 [error    ] parse error                    error='File "bad.py", line 1\n    def broken(:\n               ^\nSyntaxError: invalid syntax' path=bad.py
@@ -409,7 +407,7 @@ make test
 | `make distclean` | `scripts/clean_artifacts.py --dist` | Also remove root build/distribution/tool caches and root/`src` egg-info |
 | `make repogpt` | `uv run --locked repogpt $(ARGS)` | Show CLI help by default (`ARGS=--help`); pass `ARGS` to analyze a repository |
 
-For example: `make repogpt ARGS='path/to/repo --stdout --include-tests'`.
+For example: `make repogpt ARGS='export path/to/repo --stdout --include-tests'`.
 
 Cleanup never traverses directory symlinks. It prunes `.venv`, `.git`, `.agents`, `.codex`, `.aws`, and directories containing `pyvenv.cfg`, including custom environment names. Artifact symlinks are unlinked at the leaf. `distclean` additionally targets root `.mypy_cache`, `.ruff_cache`, `build`, and `dist`, plus `*.egg-info` directly under the root or `src`. Before deleting anything, the helper refuses any removal tree containing a protected path or virtual environment. `clean` retains build/distribution directories; `distclean` explicitly removes those outputs.
 
@@ -435,7 +433,6 @@ src/repogpt/
 tests/
 docs/
 scripts/clean_artifacts.py
-benchmark_retrieval_profiles.py
 benchmark_tree_utils.py
 ```
 

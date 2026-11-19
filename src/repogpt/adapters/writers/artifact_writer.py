@@ -7,12 +7,12 @@ import stat
 import sys
 import tempfile
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, overload
 
 from repogpt.domain.analysis import AstProjection, CodeUnitsProjection
 from repogpt.domain.errors import InvalidRequestError
+from repogpt.domain.operations import ArtifactWriteReceipt
 
 
 def file_output_path(
@@ -46,13 +46,12 @@ def file_output_path(
     return destination
 
 
-@dataclass(frozen=True)
-class ArtifactWriteReceipt:
-    size_bytes: int
-    sha256: str
-
-
 class ArtifactWriter:
+    def destination(self, value: str, *, repo_root: Path, supported_extensions: set[str]) -> Path:
+        return file_output_path(
+            value, repo_root=repo_root, supported_extensions=supported_extensions
+        )
+
     @overload
     def write(
         self,

@@ -1,4 +1,4 @@
-"""Native optional SDK transport over RepoGPT application and writer operations."""
+"""Optional native MCP transport over transport-independent repository operations."""
 
 from __future__ import annotations
 
@@ -9,8 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 from importlib.resources import files
-from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import anyio
 from jsonschema import Draft202012Validator, ValidationError
@@ -20,14 +19,9 @@ from mcp.server.stdio import stdio_server
 from mcp.shared.exceptions import McpError
 
 from repogpt import __version__
-from repogpt.adapters.writers.artifact_writer import (
-    ArtifactWriter,
-    ArtifactWriteReceipt,
-    file_output_path,
-)
 from repogpt.application.export_policy import REPO_KEY_PATTERN
 from repogpt.application.extensions import UnsupportedExtensionsError
-from repogpt.domain.analysis import AnalysisResult, AstProjection, CodeUnitsProjection
+from repogpt.application.retrieval import FLAT_PROFILE, STRUCTURED_PROFILE
 from repogpt.domain.errors import (
     ArtifactConsistencyError,
     CollectionFailure,
@@ -36,158 +30,50 @@ from repogpt.domain.errors import (
     InvalidRetrievalArtifactError,
     UnsafeReplacementError,
 )
+from repogpt.domain.operations import OperationResult
 from repogpt.logging_config import configure_logging
-from repogpt.runtime import build_analyze_repo
+from repogpt.runtime import build_repository_operations
 from repogpt.stdio import silence_failed_stdout
-from repogpt.utils.retrieval_artifact import load_documents
-from repogpt.utils.retrieval_profiles import FLAT_PROFILE, STRUCTURED_PROFILE, compare_profiles
 
 MAX_RESPONSE_BYTES = 256 * 1024
-MAX_FAILURE_SUMMARY_BYTES = 64 * 1024
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class ToolOutcome:
-    payload: dict[str, Any]
-    is_error: bool = False
 
 
 class ResponseLimitError(Exception):
     """A publication receipt cannot fit before any destination is changed."""
 
 
-def _analysis_payload(
-    result: AnalysisResult, artifact: AstProjection | CodeUnitsProjection
-) -> dict[str, Any]:
-    payload = artifact.json_payload
-    failures: list[dict[str, Any]] = []
-    failure_bytes = 0
-    for failure in payload["failures"]:
-        encoded_size = len(json.dumps(failure, ensure_ascii=False, allow_nan=False).encode("utf-8"))
-        if failure_bytes + encoded_size > MAX_FAILURE_SUMMARY_BYTES:
-            break
-        failures.append(failure)
-        failure_bytes += encoded_size
-    complete = not (
-        result.stopped_early
-        or result.stats.failed_files
-        or any(item.reason in {"file_too_large", "binary_file"} for item in result.skipped_files)
-    )
-    return {
-        "projection": "ast" if isinstance(artifact, AstProjection) else "code-units",
-        "schema_version": payload["schema_version"],
-        "complete": complete,
-        "stats": payload["stats"],
-        "failures": failures,
-        "failure_count": len(payload["failures"]),
-        "failures_truncated": len(failures) != len(payload["failures"]),
-    }
+def _analyze(**arguments: Any) -> OperationResult:
+    return build_repository_operations().analyze(**arguments)
 
 
-def analyze(
-    repo_path: str,
-    projection: Literal["ast", "code-units"] = "ast",
-    response_mode: Literal["summary", "inline"] = "summary",
-    include_tests: bool = False,
-    extensions: list[str] | None = None,
-    fail_fast: bool = False,
-    repo_key: str | None = None,
-    flatten: Literal["node", "file"] = "node",
-) -> ToolOutcome:
-    analyzer = build_analyze_repo()
-    request = analyzer.request(
-        repo_path=repo_path,
-        projection=projection,
-        include_tests=include_tests,
-        extensions=extensions,
-        fail_fast=fail_fast,
-        repo_key=repo_key,
-        flatten=flatten,
-    )
-    result, artifact = analyzer.run(request)
-    payload = _analysis_payload(result, artifact)
-    if response_mode == "inline":
-        payload["artifact"] = artifact.json_payload
-    return ToolOutcome(payload, is_error=not payload["complete"])
+def _compare(**arguments: Any) -> OperationResult:
+    return build_repository_operations().compare(**arguments)
 
 
-def export(
-    repo_path: str,
-    output_path: str,
-    projection: Literal["ast", "code-units"] = "ast",
-    format: Literal["json", "ndjson"] = "json",
-    include_tests: bool = False,
-    extensions: list[str] | None = None,
-    fail_fast: bool = False,
-    repo_key: str | None = None,
-    replace_scope: bool = False,
-    flatten: Literal["node", "file"] = "node",
-) -> ToolOutcome:
-    analyzer = build_analyze_repo()
-    request = analyzer.request(
-        repo_path=repo_path,
-        projection=projection,
-        include_tests=include_tests,
-        extensions=extensions,
-        fail_fast=fail_fast,
-        repo_key=repo_key,
-        replace_scope=replace_scope,
-        flatten=flatten,
-        format=format,
-    )
-    destination = file_output_path(
-        output_path,
-        repo_root=request.repo_root,
-        supported_extensions=analyzer.parser_registry.supported_extensions(),
-    )
-    result, artifact = analyzer.run(request)
-    summary = _analysis_payload(result, artifact)
-
-    def receipt_check(receipt: ArtifactWriteReceipt) -> None:
-        _export_outcome(summary, destination, format, receipt)
-
-    receipt = ArtifactWriter().write(
-        artifact, destination, format=format, receipt_check=receipt_check
-    )
-    return _export_outcome(summary, destination, format, receipt)
-
-
-def _export_outcome(
-    summary: dict[str, Any],
-    destination: Path,
-    format: Literal["json", "ndjson"],
-    receipt: ArtifactWriteReceipt,
-) -> ToolOutcome:
-    publication = {
-        "output_path": str(destination),
-        "format": format,
-        "size_bytes": receipt.size_bytes,
-        "sha256": receipt.sha256,
-    }
-    outcome = ToolOutcome({**summary, **publication}, is_error=not summary["complete"])
+def _bounded_export(outcome: OperationResult) -> OperationResult:
     if _fits(outcome):
         return outcome
-    outcome = ToolOutcome(
-        {
-            **{key: summary[key] for key in ("projection", "schema_version", "complete")},
-            **publication,
-            "details_truncated": True,
-        },
-        is_error=not summary["complete"],
+    keys = (
+        "projection",
+        "schema_version",
+        "complete",
+        "output_path",
+        "format",
+        "size_bytes",
+        "sha256",
     )
-    if not _fits(outcome):
+    compact = OperationResult(
+        {**{key: outcome.payload[key] for key in keys}, "details_truncated": True},
+        is_error=outcome.is_error,
+    )
+    if not _fits(compact):
         raise ResponseLimitError
-    return outcome
+    return compact
 
 
-def compare(artifact_path: str, query: str, top_k: int = 3) -> ToolOutcome:
-    try:
-        return ToolOutcome(
-            compare_profiles(load_documents(Path(artifact_path)), query_text=query, top_k=top_k)
-        )
-    except ValueError as exc:
-        raise InvalidRetrievalArtifactError(str(exc)) from exc
+def _export(**arguments: Any) -> OperationResult:
+    return build_repository_operations().export(**arguments, result_policy=_bounded_export)
 
 
 def _object(properties: dict[str, Any], *, required: list[str] | None = None) -> dict[str, Any]:
@@ -299,7 +185,7 @@ def _comparison_schema() -> dict[str, Any]:
 @dataclass(frozen=True)
 class ToolSpec:
     tool: types.Tool
-    handler: Callable[..., ToolOutcome]
+    handler: Callable[..., OperationResult]
     input_validator: Draft202012Validator
     output_validator: Draft202012Validator
 
@@ -309,7 +195,7 @@ def _spec(
     description: str,
     inputs: dict[str, Any],
     outputs: dict[str, Any],
-    handler: Callable[..., ToolOutcome],
+    handler: Callable[..., OperationResult],
     *,
     write: bool = False,
 ) -> ToolSpec:
@@ -353,7 +239,7 @@ TOOLS = {
             required=["repo_path"],
         ),
         _analysis_schema(write=False),
-        analyze,
+        _analyze,
     ),
     "repogpt_compare_profiles": _spec(
         "repogpt_compare_profiles",
@@ -367,7 +253,7 @@ TOOLS = {
             required=["artifact_path", "query"],
         ),
         _comparison_schema(),
-        compare,
+        _compare,
     ),
     "repogpt_export": _spec(
         "repogpt_export",
@@ -382,13 +268,13 @@ TOOLS = {
             required=["repo_path", "output_path"],
         ),
         _analysis_schema(write=True),
-        export,
+        _export,
         write=True,
     ),
 }
 
 
-def _wire_result(outcome: ToolOutcome) -> types.CallToolResult:
+def _wire_result(outcome: OperationResult) -> types.CallToolResult:
     return types.CallToolResult(
         content=[
             types.TextContent(
@@ -403,15 +289,15 @@ def _wire_result(outcome: ToolOutcome) -> types.CallToolResult:
     )
 
 
-def _fits(outcome: ToolOutcome) -> bool:
+def _fits(outcome: OperationResult) -> bool:
     return (
         len(_wire_result(outcome).model_dump_json(by_alias=True, exclude_none=True).encode("utf-8"))
         <= MAX_RESPONSE_BYTES
     )
 
 
-def _response_limit() -> ToolOutcome:
-    return ToolOutcome(
+def _response_limit() -> OperationResult:
+    return OperationResult(
         {
             "error": {
                 "code": "response_too_large",
@@ -458,7 +344,7 @@ def create_server() -> Server[Any, Any]:
             OSError,
             InvalidRetrievalArtifactError,
         ) as exc:
-            outcome = ToolOutcome(
+            outcome = OperationResult(
                 {"error": {"code": "operation_failed", "message": str(exc)}}, is_error=True
             )
         except Exception as exc:

@@ -14,7 +14,7 @@ from mcp import types
 
 from repogpt.app import cli
 from repogpt.mcp_server import create_server
-from repogpt.runtime import build_analyze_repo
+from repogpt.runtime import build_repository_operations
 
 
 def _export(repo: Path, destination: Path) -> types.CallToolResult:
@@ -70,10 +70,14 @@ def test_cli_checks_destination_before_analysis(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / "source.py").write_text("x = 1\n")
-    analyzer = build_analyze_repo()
+    operations = build_repository_operations()
+    analyzer = operations.analyzer
     with (
-        patch("sys.argv", ["repogpt", str(repo), "-o", str(tmp_path / "missing" / "out.json")]),
-        patch.object(cli, "build_analyze_repo", return_value=analyzer),
+        patch(
+            "sys.argv",
+            ["repogpt", "export", str(repo), "--output", str(tmp_path / "missing" / "out.json")],
+        ),
+        patch.object(cli, "build_repository_operations", return_value=operations),
         patch.object(analyzer, "run", wraps=analyzer.run) as run,
     ):
         assert cli.main() == 3

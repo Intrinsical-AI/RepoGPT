@@ -295,11 +295,11 @@ def test_collect_records_non_regular_files_without_opening_them(tmp_path: Path) 
     fifo = tmp_path / "stream.py"
     os.mkfifo(fifo)
 
-    with patch("repogpt.adapters.fs.collector.is_likely_binary") as sniff:
+    with patch("repogpt.adapters.fs.collector.os.open") as source_open:
         files, skipped = DefaultCollector().collect(AnalysisRequest(repo_root=tmp_path), {"py"})
 
     assert files == []
-    sniff.assert_not_called()
+    source_open.assert_not_called()
     assert [(item.relative_path, item.reason) for item in skipped] == [
         ("stream.py", "non_regular_file")
     ]

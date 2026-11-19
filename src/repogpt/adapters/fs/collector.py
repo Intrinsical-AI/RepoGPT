@@ -10,7 +10,6 @@ from repogpt.domain.analysis import AnalysisRequest
 from repogpt.domain.errors import CollectionFailure
 from repogpt.domain.files import CollectedFile, SkippedFile
 from repogpt.ports.collector import CollectorPort
-from repogpt.utils.file_utils import is_likely_binary
 
 DEFAULT_IGNORES: set[str] = {
     ".git",
@@ -118,18 +117,12 @@ class DefaultCollector(CollectorPort):
             if file_size > request.max_file_size:
                 skip(path, "file_too_large")
                 continue
-            try:
-                binary = is_likely_binary(path)
-            except OSError as exc:
-                raise CollectionFailure(f"Cannot read {relative_path}: {exc}") from exc
-            if binary:
-                skip(path, "binary_file")
-                continue
             files.append(
                 CollectedFile(
                     abs_path=path,
                     relative_path=relative_path,
                     extension=extension,
+                    max_file_size=request.max_file_size,
                 )
             )
         return files, sorted(skipped, key=lambda item: item.relative_path)

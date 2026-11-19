@@ -63,14 +63,14 @@ Responsibilities:
 
 ### 3.2 MCP stdio server
 
-`repogpt-mcp` uses the official SDK, installed through the optional `[mcp]`
+`repogpt mcp` uses the official SDK, installed through the optional `[mcp]`
 extra. Its internal protocol target is `2025-11-25`; the SDK owns framing,
 negotiation, initialization, ping and notification handling. Ordinary library
 and CLI imports do not require or initialize MCP.
 
 The server exposes `repogpt_analyze` and `repogpt_compare_profiles` as read-only
 operations and `repogpt_export` as explicit file publication. The CLI and MCP
-share `AnalyzeRepo.request`, `AnalyzeRepo.run` and `ArtifactWriter`. Destination
+share the transport-independent `RepositoryOperations` application facade, which composes `AnalyzeRepo` and `ArtifactWriter`. Destination
 validation lives beside the writer. The old combined emit tools are removed.
 
 Analysis defaults to a summary; inline mode adds the native AST v3 or code-units
@@ -232,7 +232,7 @@ RepoGPT includes lightweight retrieval helpers over `code-units`. These are inte
 
 ### 6.3 Canonical model context
 
-`assemble_flat_bundle` and `assemble_structured_bundle` are public helpers in `repogpt.utils.retrieval_profiles`, each accepting `(documents, *, query_text, top_k=3)`. Their raw `items` remain selected source documents, including overlapping class/method and heading/subheading content. Both return a separate `context` with `text` and `segments` for model consumption.
+`assemble_flat_bundle` and `assemble_structured_bundle` are public helpers in `repogpt.application.retrieval`, each accepting `(documents, *, query_text, top_k=3)`. Their raw `items` remain selected source documents, including overlapping class/method and heading/subheading content. Both return a separate `context` with `text` and `segments` for model consumption.
 
 Context assembly groups physical lines by `(scope, snapshot_id, source_id, path, metadata.file.sha256)`. It merges covered lines within each group, coalesces contiguous intervals, and rejects conflicting text at the same coordinate. Different provenance groups stay separate. Module `content_ranges` map concatenated residual text to its original inclusive intervals; other documents use their complete source spans. Invalid ranges, missing provenance, and mismatched line counts fail rather than falling back to raw concatenation.
 

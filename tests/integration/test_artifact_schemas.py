@@ -57,7 +57,7 @@ def test_code_units_json_golden_matches_public_schema() -> None:
 def test_code_units_v6_requires_module_only_content_ranges(tmp_path: Path) -> None:
     (tmp_path / "sample.py").write_text("CONSTANT = 3\ndef f():\n    pass\n", encoding="utf-8")
     _, projection = build_analyze_repo().run(
-        AnalysisRequest(repo_root=tmp_path, projection="code_units", repo_key="schema-test")
+        AnalysisRequest(repo_root=tmp_path, projection="code-units", repo_key="schema-test")
     )
     payload = projection.json_payload
     validator = _validator("code-units-v6.schema.json")
@@ -89,8 +89,9 @@ def test_cli_multiline_decorators_validate_and_stay_with_the_callable(
                 sys.executable,
                 "-m",
                 "repogpt.app.cli",
+                "export",
                 str(tmp_path),
-                "--emit",
+                "--projection",
                 projection,
                 "--stdout",
             ]
@@ -120,12 +121,12 @@ def test_cli_multiline_decorators_validate_and_stay_with_the_callable(
         ("ast", "json", "node"),
         ("ast", "ndjson", "file"),
         ("ast", "ndjson", "node"),
-        ("code_units", "json", "node"),
+        ("code-units", "json", "node"),
     ],
 )
 def test_fresh_semantic_regressions_match_public_schemas(
     tmp_path: Path,
-    projection: Literal["ast", "code_units"],
+    projection: Literal["ast", "code-units"],
     format: Literal["json", "ndjson"],
     flatten: Literal["node", "file"],
 ) -> None:
@@ -148,13 +149,13 @@ def test_fresh_semantic_regressions_match_public_schemas(
             projection=projection,
             format=format,
             flatten_kind=flatten,
-            repo_key="schema-test" if projection == "code_units" else None,
-            replace_scope=projection == "code_units",
+            repo_key="schema-test" if projection == "code-units" else None,
+            replace_scope=projection == "code-units",
             include_tests=True,
         )
     )
     assert result.stats.failed_files == 0
-    schema = "code-units-v6.schema.json" if projection == "code_units" else "ast-v3.schema.json"
+    schema = "code-units-v6.schema.json" if projection == "code-units" else "ast-v3.schema.json"
     validator = _validator(schema)
     if format == "ndjson":
         assert isinstance(artifact, AstProjection)
@@ -219,12 +220,12 @@ def _object_paths(value: Any, path: tuple[str | int, ...] = ()) -> list[tuple[st
         ("ast", "json", "node"),
         ("ast", "ndjson", "file"),
         ("ast", "ndjson", "node"),
-        ("code_units", "json", "node"),
+        ("code-units", "json", "node"),
     ],
 )
 def test_supported_exports_reject_extra_fields_at_every_object(
     supported_parser_repo: Path,
-    projection: Literal["ast", "code_units"],
+    projection: Literal["ast", "code-units"],
     format: Literal["json", "ndjson"],
     flatten: Literal["node", "file"],
 ) -> None:
@@ -234,7 +235,7 @@ def test_supported_exports_reject_extra_fields_at_every_object(
             projection=projection,
             format=format,
             flatten_kind=flatten,
-            repo_key="schema-test" if projection == "code_units" else None,
+            repo_key="schema-test" if projection == "code-units" else None,
         )
     )
     assert result.stats.ok_files == 2
@@ -245,7 +246,7 @@ def test_supported_exports_reject_extra_fields_at_every_object(
         if parsed_file.root is not None
         for node in iter_nodes(parsed_file.root)
     } == {"module", "import", "class", "method", "function", "heading", "link", "code_block"}
-    schema = "code-units-v6.schema.json" if projection == "code_units" else "ast-v3.schema.json"
+    schema = "code-units-v6.schema.json" if projection == "code-units" else "ast-v3.schema.json"
     validator = _validator(schema)
     if format == "ndjson":
         assert isinstance(artifact, AstProjection)
@@ -289,7 +290,7 @@ def test_code_units_metadata_does_not_repeat_empty_dependencies(
     supported_parser_repo: Path,
 ) -> None:
     _, artifact = build_analyze_repo().run(
-        AnalysisRequest(repo_root=supported_parser_repo, projection="code_units")
+        AnalysisRequest(repo_root=supported_parser_repo, projection="code-units")
     )
 
     assert all(
@@ -303,7 +304,7 @@ def test_code_units_schema_rejects_required_field_renames(
     supported_parser_repo: Path, field: str
 ) -> None:
     _, artifact = build_analyze_repo().run(
-        AnalysisRequest(repo_root=supported_parser_repo, projection="code_units")
+        AnalysisRequest(repo_root=supported_parser_repo, projection="code-units")
     )
     payload = deepcopy(artifact.json_payload)
     function = next(
@@ -318,7 +319,7 @@ def test_code_units_schema_rejects_required_field_renames(
 
 def test_code_units_schema_rejects_unknown_unit_types(supported_parser_repo: Path) -> None:
     _, artifact = build_analyze_repo().run(
-        AnalysisRequest(repo_root=supported_parser_repo, projection="code_units")
+        AnalysisRequest(repo_root=supported_parser_repo, projection="code-units")
     )
     payload = deepcopy(artifact.json_payload)
     payload["documents"][0]["unit_type"] = "unsupported-parser-node"

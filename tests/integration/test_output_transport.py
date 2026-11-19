@@ -16,6 +16,7 @@ def _closed_output(
     command: list[str], *, after_prefix: bool, incoming: bytes | None = None
 ) -> tuple[int, bytes]:
     env = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")}
+    env.pop("PYTHONUNBUFFERED", None)
     if not after_prefix:
         read_fd, write_fd = os.pipe()
         os.close(read_fd)
@@ -56,7 +57,7 @@ def _closed_output(
 @pytest.mark.parametrize("after_prefix", [False, True], ids=["buffered", "during-write"])
 @pytest.mark.parametrize(
     "options",
-    [[], ["--format", "ndjson"], ["--emit", "code-units"]],
+    [[], ["--format", "ndjson"], ["--projection", "code-units"]],
     ids=["ast-json", "ast-ndjson", "code-units"],
 )
 def test_cli_closed_stdout_exits_cleanly(
@@ -67,7 +68,7 @@ def test_cli_closed_stdout_exits_cleanly(
             'def sample():\n    """' + "x" * 100_000 + '"""\n    pass\n', encoding="utf-8"
         )
     code, stderr = _closed_output(
-        [sys.executable, "-m", "repogpt.app.cli", str(tmp_path), "--stdout", *options],
+        [sys.executable, "-m", "repogpt.app.cli", "export", str(tmp_path), "--stdout", *options],
         after_prefix=after_prefix,
     )
     assert code == 0, stderr.decode()
@@ -75,6 +76,71 @@ def test_cli_closed_stdout_exits_cleanly(
     assert b"Traceback" not in stderr
     assert b"Exception ignored" not in stderr
     assert b"[error" not in stderr
+
+
+@pytest.mark.parametrize("response_mode", ["summary", "inline"])
+def test_cli_analyze_closed_stdout_exits_cleanly(tmp_path: Path, response_mode: str) -> None:
+    (tmp_path / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    code, stderr = _closed_output(
+        [
+            sys.executable,
+            "-m",
+            "repogpt.app.cli",
+            "analyze",
+            str(tmp_path),
+            "--response-mode",
+            response_mode,
+        ],
+        after_prefix=False,
+    )
+    assert code == 0, stderr.decode()
+    assert stderr == b""
+
+
+def test_cli_compare_closed_stdout_exits_cleanly(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "sample.py").write_text("def sample():\n    return 1\n", encoding="utf-8")
+    artifact = tmp_path / "artifact.json"
+    cli = [sys.executable, "-m", "repogpt.app.cli"]
+    subprocess.run(
+        [*cli, "export", str(repo), "--projection", "code-units", "--output", str(artifact)],
+        env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")},
+        capture_output=True,
+        check=True,
+        timeout=15,
+    )
+
+    code, stderr = _closed_output(
+        [*cli, "compare", str(artifact), "sample"],
+        after_prefix=False,
+    )
+    assert code == 0, stderr.decode()
+    assert stderr == b""
+
+
+def test_cli_export_receipt_closed_stdout_preserves_artifact(tmp_path: Path) -> None:
+    (tmp_path / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    output = tmp_path / "out.json"
+    code, stderr = _closed_output(
+        [
+            sys.executable,
+            "-m",
+            "repogpt.app.cli",
+            "export",
+            str(tmp_path),
+            "--projection",
+            "code-units",
+            "--output",
+            str(output),
+        ],
+        after_prefix=False,
+    )
+    assert code == 0, stderr.decode()
+    assert stderr == b""
+    artifact = json.loads(output.read_text(encoding="utf-8"))
+    assert artifact["kind"] == "code-units"
+    assert artifact["documents"]
 
 
 @pytest.mark.parametrize("after_prefix", [False, True], ids=["buffered", "during-write"])
@@ -104,14 +170,16 @@ def test_mcp_closed_stdout_exits_cleanly(tmp_path: Path, after_prefix: bool) -> 
     assert b"Exception ignored" not in stderr
 
 
-@pytest.mark.parametrize("entrypoint", ["cli", "mcp"])
+@pytest.mark.parametrize("entrypoint", ["cli", "analyze", "mcp"])
 def test_other_stdout_io_errors_keep_exit_code_3(tmp_path: Path, entrypoint: str) -> None:
     root = tmp_path / "repo"
     root.mkdir()
     destination = tmp_path / "readonly-output"
     destination.write_bytes(b"previous")
-    command = [sys.executable, "-m", "repogpt.app.cli", str(root), "--stdout"]
+    command = [sys.executable, "-m", "repogpt.app.cli", "export", str(root), "--stdout"]
     incoming = None
+    if entrypoint == "analyze":
+        command = [sys.executable, "-m", "repogpt.app.cli", "analyze", str(root)]
     if entrypoint == "mcp":
         command = [sys.executable, "-m", "repogpt.mcp_server"]
         incoming = (
@@ -129,6 +197,8 @@ def test_other_stdout_io_errors_keep_exit_code_3(tmp_path: Path, entrypoint: str
             )
             + "\n"
         )
+    env = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")}
+    env.pop("PYTHONUNBUFFERED", None)
     with destination.open("rb") as readonly_stdout:
         run = subprocess.run(
             command,
@@ -136,7 +206,7 @@ def test_other_stdout_io_errors_keep_exit_code_3(tmp_path: Path, entrypoint: str
             stdout=readonly_stdout,
             stderr=subprocess.PIPE,
             text=True,
-            env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")},
+            env=env,
             timeout=15,
         )
     assert run.returncode == 3, run.stderr
@@ -156,7 +226,7 @@ def test_cli_write_failure_has_one_diagnostic_and_preserves_destination(
     output = (
         tmp_path / "missing" / "out.json" if stage == "missing-parent" else tmp_path / "out.json"
     )
-    command = [sys.executable, "-m", "repogpt.app.cli"]
+    command = [sys.executable, "-m", "repogpt.app.cli", "export"]
     if stage != "missing-parent":
         output.write_bytes(b"previous artifact")
         target = {
@@ -172,9 +242,9 @@ def test_cli_write_failure_has_one_diagnostic_and_preserves_destination(
             f"side_effect=OSError({error}, 'injected write failure')):\n"
             "    raise SystemExit(main())\n"
         )
-        command = [sys.executable, "-c", script]
+        command = [sys.executable, "-c", script, "export"]
     run = subprocess.run(
-        [*command, str(root), "-o", str(output)],
+        [*command, str(root), "--output", str(output)],
         capture_output=True,
         text=True,
         env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")},

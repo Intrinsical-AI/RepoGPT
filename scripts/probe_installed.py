@@ -131,7 +131,6 @@ def installed_files(wheel: Path, expected_version: str) -> dict[str, Any]:
     entrypoints = {entry.name: entry.value for entry in distribution.entry_points}
     assert entrypoints == {
         "repogpt": "repogpt.app.cli:main",
-        "repogpt-mcp": "repogpt.app.mcp_cli:main",
     }
     with zipfile.ZipFile(wheel) as archive:
         expected = {
@@ -169,7 +168,7 @@ def check_base_install() -> None:
     assert importlib.util.find_spec("mcp") is None
     run_cli("--help")
     result = subprocess.run(
-        launcher_command("repogpt-mcp", Path.cwd() / "mcp-base-guard.json"),
+        [*launcher_command("repogpt", Path.cwd() / "mcp-base-guard.json"), "mcp"],
         capture_output=True,
         timeout=30,
     )
@@ -194,7 +193,7 @@ async def check_native_interfaces(work: Path) -> dict[str, Any]:
     before = {path.name: digest(path.read_bytes()) for path in repo.iterdir()}
     params = StdioServerParameters(
         command=sys.executable,
-        args=launcher_command("repogpt-mcp", work / "mcp-guard.json")[1:],
+        args=[*launcher_command("repogpt", work / "mcp-guard.json")[1:], "mcp"],
         cwd=str(work),
         env={**os.environ, "PYTHONSAFEPATH": "1"},
     )
@@ -235,9 +234,10 @@ async def check_native_interfaces(work: Path) -> dict[str, Any]:
                     "include_tests": True,
                 }
                 cli_arguments = [
+                    "export",
                     str(repo),
                     "--stdout",
-                    "--emit",
+                    "--projection",
                     projection,
                     "--format",
                     format,

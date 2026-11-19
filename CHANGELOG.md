@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.13.0
+
+- **Breaking CLI change.** Use `repogpt analyze` for inspection, `repogpt export`
+  for artifact publication and `repogpt compare` for retrieval comparisons.
+  Move `--emit` to `--projection` and pass `--output PATH` or `--stdout`
+  explicitly for exports. The MCP entry point is `repogpt mcp` with the
+  `[mcp]` extra installed. AST v3 and code-units v6 remain the artifact formats.
+- **Python integration.** Install the distribution before importing RepoGPT.
+  Import `assemble_flat_bundle` and `assemble_structured_bundle` from
+  `repogpt.application.retrieval`.
+- Source reads recheck file identity, size and metadata at the point of use.
+  Analysis, comparison and export receipts handle a closed stdout consumer
+  during the write, including small buffered results.
+
 ## 0.12.1
 
 - Update the optional MCP SDK to 1.30.0, preserve AnyIO 4.14.2, and declare certifi/PyJWT/cryptography/pydantic-settings security floors in that extra. AST v3, code-units v6 and CLI/MCP output contracts remain unchanged.
